@@ -55,11 +55,11 @@ class QueryGenerator:
         trace = ""
         for line in lines:
             line_text = line.strip()
+            if line_text.lower().startswith("so the final answer is: "):
+                return trace, line_text[len("so the final answer is: "):].strip(), False
             trace += line_text + "\n"
-            if line_text.lower().startswith("follow up:") or line_text.lower().startswith("follow-up:"):
-                return trace, line_text.split(":")[-1].strip(), True
-            if line_text.lower().startswith("so the final answer is:"):
-                return trace, line_text.split(":")[-1].strip(), False
+            if line_text.lower().startswith("follow up: ") or line_text.lower().startswith("follow-up: "):
+                return trace, line_text[len("follow up: "):].strip(), True
         return trace, "", True
 
 
@@ -88,11 +88,12 @@ def test():
     )]
     is_first = False
 
-    new_traces, queries = query_generator.batch_generate(traces, is_first)
-    for trace, query in zip(new_traces, queries):
+    new_traces, responses, is_query_list = query_generator.batch_generate(traces, is_first)
+    for trace, query, is_query in zip(new_traces, responses, is_query_list):
         print("Trace: ")
         print(trace)
         print(f"Query: {query}")
+        print(f"Is Query: {is_query}")
         print("-" * 50)
     print("Test completed.")
 
