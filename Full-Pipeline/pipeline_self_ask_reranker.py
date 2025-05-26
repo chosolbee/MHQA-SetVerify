@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import random as rd
 import argparse
 from typing import List, Dict, Any, Tuple
 import torch
@@ -192,6 +193,8 @@ def parse_args():
 
 
 def main(args: argparse.Namespace):
+    rd.seed(42)
+
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if local_rank in [-1, 0]:
         wandb.init(project="MultiHopQA-test", entity=WANDB_ENTITY)
@@ -245,6 +248,7 @@ def main(args: argparse.Namespace):
 
     with open(args.questions, "r", encoding="utf-8") as f:
         questions = f.readlines()
+        rd.shuffle(questions)
         questions = [json.loads(q) for q in questions]
 
     all_metrics = {
