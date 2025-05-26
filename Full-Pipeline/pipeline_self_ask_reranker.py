@@ -245,7 +245,7 @@ def main(args: argparse.Namespace):
 
     with open(args.questions, "r", encoding="utf-8") as f:
         questions = f.readlines()
-        questions = [json.loads(q) for q in questions][:32]
+        questions = [json.loads(q) for q in questions]
 
     all_metrics = {
         "retrieval": {
