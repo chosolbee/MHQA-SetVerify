@@ -120,10 +120,13 @@ def run_batch(retriever: Retriever,
         if traces_path:
             all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions)
             with open(traces_path, 'w', encoding='utf-8') as f:
-                for question, trace, em, f1 in zip(final_questions, final_traces, all_ans_em_list, all_ans_f1_list):
+                for question, trace, prediction, em, f1 in zip(final_questions, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list):
                     info = {
-                        "qusetion": question["question"],
+                        "qusetion": question.get("question", ""),
+                        "answer": question.get("answer", ""),
+                        "answer_aliases": question.get("answer_aliases", []),
                         "trace": trace,
+                        "prediction": prediction,
                         "em": em,
                         "f1": f1,
                     }
@@ -242,7 +245,7 @@ def main(args: argparse.Namespace):
 
     with open(args.questions, "r", encoding="utf-8") as f:
         questions = f.readlines()
-        questions = [json.loads(q) for q in questions]
+        questions = [json.loads(q) for q in questions][:32]
 
     all_metrics = {
         "retrieval": {
