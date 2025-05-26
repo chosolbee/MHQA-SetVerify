@@ -96,3 +96,23 @@ def compute_answer_metrics(questions: List[Dict[str, Any]],
         f1_list[idx].append(f1)
 
     return em_list, f1_list
+
+
+def compute_all_answer_metrics(questions: List[Dict[str, Any]],
+                                 predictions: List[str]) -> Tuple[List[float], List[float]]:
+    em_list = []
+    f1_list = []
+
+    for question, prediction in zip(questions, predictions):
+        gold_answers = [question["answer"]] + question.get("answer_aliases", [])
+        gold_answers = [normalize(g) for g in gold_answers]
+
+        norm_pred = normalize(prediction)
+
+        em = int(norm_pred in gold_answers)
+        f1 = max(token_f1(norm_pred, g) for g in gold_answers)
+
+        em_list.append(em)
+        f1_list.append(f1)
+
+    return em_list, f1_list
