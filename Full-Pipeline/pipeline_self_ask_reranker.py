@@ -120,7 +120,7 @@ def run_batch(retriever: Retriever,
         ans_em_list, ans_f1_list = compute_answer_metrics(final_questions, final_predictions)
         if traces_path:
             all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions)
-            with open(traces_path, 'w', encoding='utf-8') as f:
+            with open(traces_path, 'a', encoding='utf-8') as f:
                 for question, trace, prediction, em, f1 in zip(final_questions, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list):
                     info = {
                         "question": question.get("question", ""),
@@ -250,7 +250,8 @@ def main(args: argparse.Namespace):
         questions = f.readlines()
         rd.shuffle(questions)
         questions = [json.loads(q) for q in questions]
-
+        # questions = questions[5000:10000] 
+        
     all_metrics = {
         "retrieval": {
             "em": [[], [], []],
