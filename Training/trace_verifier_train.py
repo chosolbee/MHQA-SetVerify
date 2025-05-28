@@ -29,7 +29,7 @@ import wandb
 from config import WANDB_ENTITY, DEBERTA_MAX_LENGTH
 
 class BinaryVerifierDataset(Dataset):
-    def __init__(self, filepath, tokenizer, max_length=768, f1_threshold=0.7):
+    def __init__(self, filepath, tokenizer, max_length=1024, f1_threshold=0.7):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.f1_threshold = f1_threshold
@@ -39,37 +39,39 @@ class BinaryVerifierDataset(Dataset):
         with open(filepath, "r", encoding="utf-8") as f:
             for line in f:
                 entry = json.loads(line)
-                question = entry["question"]
                 question_id = entry.get("question_id", f"q_{len(self.data)}")
                 trace = entry["trace"]
                 f1_score = entry["f1"]
                 
-                text = f"Question: {question} [SEP] Trace: {trace}"
-                
                 label = 1 if f1_score > f1_threshold else 0
                 
                 self.data.append({
-                    "text": text, 
-                    "label": label, 
+                    "text": trace,
+                    "label": label,
                     "question_id": question_id,
                     "f1_score": f1_score
                 })
                 question_ids.append(question_id)
 
         unique_question_ids = sorted(set(question_ids))
-        question_id_to_idx = {question_id: idx for idx, question_id in enumerate(unique_question_ids)}
+        question_id_to_idx = {qid: idx for idx, qid in enumerate(unique_question_ids)}
+        
         for item in self.data:
             item["question_id_idx"] = question_id_to_idx[item["question_id"]]
 
+        positive_count = sum(item['label'] for item in self.data)
+        negative_count = len(self.data) - positive_count
+        
         print(f"Loaded {len(self.data)} examples")
-        print(f"Positive examples (f1 > {f1_threshold}): {sum(item['label'] for item in self.data)}")
-        print(f"Negative examples (f1 <= {f1_threshold}): {sum(1 - item['label'] for item in self.data)}")
+        print(f"Positive examples (f1 > {f1_threshold}): {positive_count}")
+        print(f"Negative examples (f1 <= {f1_threshold}): {negative_count}")
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         item = self.data[idx]
+        
         encoding = self.tokenizer(
             item["text"],
             padding="max_length",
@@ -77,12 +79,15 @@ class BinaryVerifierDataset(Dataset):
             max_length=self.max_length,
             return_tensors="pt"
         )
+        
         encoding = {key: val.squeeze(0) for key, val in encoding.items()}
+        
         encoding["labels"] = {
             "labels": torch.tensor(item["label"], dtype=torch.float),
             "question_id": torch.tensor(item["question_id_idx"], dtype=torch.long),
             "f1_score": torch.tensor(item["f1_score"], dtype=torch.float),
         }
+        
         return encoding
 
 class QuestionGroupSampler(Sampler):
@@ -365,11 +370,11 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         num_train_epochs=args.num_epochs,
         eval_strategy="steps",
-        eval_steps=500,
+        eval_steps=50,
         save_strategy="steps",
-        save_steps=500,
+        save_steps=50,
         logging_strategy="steps",
-        logging_steps=100,
+        logging_steps=10,
         report_to=["wandb"] if (local_rank == -1 or local_rank == 0) else [],
         run_name=args.run_name,
         load_best_model_at_end=True,
