@@ -25,11 +25,11 @@ class BoNVerifier:
         for i in range(0, len(batch_traces), self.batch_size):
             inputs = self.tokenizer(
                 batch_traces[i:i + self.batch_size],
-                return_tensors="pt",
-                padding=True,
+                padding="max_length",
                 truncation=True,
-                max_length=self.max_length
-            )
+                max_length=self.max_length,
+                return_tensors="pt",
+            ).to(self.model.device)
             outputs = self.model(**inputs)
             scores[i:i + self.batch_size] = outputs.logits.squeeze(-1).cpu()
         grouped_scores = scores.view(-1, num_generations)
@@ -54,7 +54,12 @@ def test(args: argparse.Namespace):
         max_length=100,
     )
 
-    batch_traces = ["example 1", "example 2", "example 3", "example 4"]
+    batch_traces = [
+        "Schnéevoigt was born in Copenhagen, Denmark to actress Siri Schnéevoigt, and he is the father of actor and director Alf Schnéevoigt.",
+        "Le Juge Fayard dit Le Shériff is a 1977 French crime film written and directed by Yves Boisset. The film was inspired by the death of François Renaud.",
+        "Death Valley is a desert valley located in Eastern California, in the northern Mojave Desert bordering the Great Basin Desert. It is one of the hottest places in the world along with deserts in the Middle East.",
+        "A Fistful of Death ( ) is a 1971 Italian Western film directed by Demofilo Fidani and starring Klaus Kinski.",
+    ]
     num_generations = 2
 
     indices = verifier.batch_verify(batch_traces, num_generations)
