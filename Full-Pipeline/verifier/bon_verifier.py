@@ -23,14 +23,15 @@ class BoNVerifier:
     def batch_verify(self, batch_traces, num_generations=4):
         scores = torch.zeros(len(batch_traces), dtype=torch.float16)
         for i in range(0, len(batch_traces), self.batch_size):
-            inputs = self.tokenizer(
-                batch_traces[i:i + self.batch_size],
-                padding="max_length",
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt",
-            ).to(self.model.device)
-            outputs = self.model(**inputs)
+            with torch.no_grad():
+                inputs = self.tokenizer(
+                    batch_traces[i:i + self.batch_size],
+                    padding="max_length",
+                    truncation=True,
+                    max_length=self.max_length,
+                    return_tensors="pt",
+                ).to(self.model.device)
+                outputs = self.model(**inputs)
             scores[i:i + self.batch_size] = outputs.logits.squeeze(-1).cpu()
         grouped_scores = scores.view(-1, num_generations)
         local_max_indices = torch.argmax(grouped_scores, dim=1)
