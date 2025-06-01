@@ -123,6 +123,7 @@ def run_batch(retriever: Retriever,
             with open(traces_path, 'a', encoding='utf-8') as f:
                 for question, trace, prediction, em, f1 in zip(final_questions, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list):
                     info = {
+                        "question_id": question["id"],
                         "question": question.get("question", ""),
                         "answer": question.get("answer", ""),
                         "answer_aliases": question.get("answer_aliases", []),
@@ -188,6 +189,9 @@ def parse_args():
     main_group.add_argument("--output-path", type=str, help="Path to save predictions and metrics")
     main_group.add_argument("--stop-log-path", type=str, default=None, help="Optional JSONL path; Path to the JSONL file where stopping logs are written")
 
+    main_group.add_argument("--start-index", type=int, default=0, help="Starting index for processing the Questions file (0-based)")
+    main_group.add_argument("--end-index", type=int, default=None, help="Ending index for processing the Questions file (exclusive, 0-based)")
+
     args = parser.parse_args()
     return args
 
@@ -250,8 +254,17 @@ def main(args: argparse.Namespace):
         questions = f.readlines()
         rd.shuffle(questions)
         questions = [json.loads(q) for q in questions]
-        # questions = questions[5000:10000] 
-        
+
+        start_idx = args.start_index
+        end_idx = args.end_index
+        if start_idx < 0:
+            raise ValueError(f"--start-index must be a non-negative integer. Received: {start_idx}")
+        if end_idx is not None and end_idx < start_idx:
+            raise ValueError(f"--end-index ({end_idx}) cannot be less than --start-index ({start_idx}).")
+
+        questions = questions[start_idx:end_idx]
+
+
     all_metrics = {
         "retrieval": {
             "em": [[], [], []],
@@ -346,3 +359,4 @@ def main(args: argparse.Namespace):
 if __name__ == "__main__":
     args = parse_args()
     main(args)
+    
