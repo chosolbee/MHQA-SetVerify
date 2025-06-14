@@ -29,9 +29,10 @@ def run_batch(retriever: Retriever,
     final_questions = []
     final_batch_history = []
     final_traces = []
+    final_predictions = []
 
     batch_history = [[] for _ in range(len(questions))]
-    traces = ["Question: " + question["question"] + "\n" for question in questions]
+    traces = ["" for _ in questions]
     iter_count = 0
 
     stop_logs = []
@@ -39,7 +40,7 @@ def run_batch(retriever: Retriever,
     while questions:
         start_time = time.time()
 
-        traces, responses, is_query_list = query_generator.batch_generate(traces, is_first=iter_count == 0)
+        traces, responses, is_query_list = query_generator.batch_generate(questions, traces)
 
         search_questions = []
         search_batch_history = []
@@ -56,6 +57,7 @@ def run_batch(retriever: Retriever,
                 final_questions.append(question)
                 final_batch_history.append(history)
                 final_traces.append(trace)
+                final_predictions.append(response)
 
                 stop_logs.append({
                     "question_id": question["id"],
@@ -116,13 +118,14 @@ def run_batch(retriever: Retriever,
                 f.write(json.dumps(log,ensure_ascii=False)+'\n')
 
     if generate_answers and answer_generator:
-        final_predictions = answer_generator.batch_answer(final_questions, final_batch_history)
+        final_predictions.extend(answer_generator.batch_answer(questions, batch_history))
         ans_em_list, ans_f1_list = compute_answer_metrics(final_questions, final_predictions)
         if traces_path:
             all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions)
             with open(traces_path, 'a', encoding='utf-8') as f:
                 for question, trace, prediction, em, f1 in zip(final_questions, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list):
                     info = {
+                        "question_id": question["id"],
                         "question": question.get("question", ""),
                         "answer": question.get("answer", ""),
                         "answer_aliases": question.get("answer_aliases", []),

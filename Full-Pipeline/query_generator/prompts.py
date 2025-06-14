@@ -134,7 +134,3 @@ Context: Effects of Hurricane Sandy in New York: Hurricane Sandy Category 1 hurr
 Intermediate answer: Hurricane sandy hit New York City in October 28, 2012.
 So the final answer is: October 28, 2012
 """
-
-SELF_ASK_USER_PROMPT_FIRST = "Give a follow up question."
-
-SELF_ASK_USER_PROMPT_NOT_FIRST = "Give an intermediate answer and a follow up question if needed. If not, give the final answer."
