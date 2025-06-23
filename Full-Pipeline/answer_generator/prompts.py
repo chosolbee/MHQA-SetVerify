@@ -190,6 +190,70 @@ Document: Effects of Hurricane Sandy in New York: Hurricane Sandy Category 1 hur
 Intermediate answer: Hurricane sandy hit New York City in October 28, 2012.
 """
 
+
+### intermediate answer 생성할 때 가장 최근 query, doc만 보도록
+# INTERMEDIATE_ANSWER_GENERATION_PROMPT = """
+# Given an original question and the most recent follow-up question with its corresponding Wikipedia snippet, generate an intermediate answer using only the provided snippet.
+
+# Process:
+# - You receive:
+#   - Question: <original question>
+#   - Follow up: <most recent follow-up question>  
+#   - Document: <Wikipedia snippet for the follow-up question>
+
+# - Your task:
+#     1. Focus on answering the most recent follow-up question.
+#     2. Use only the provided Document as your evidence.
+#     3. Output exactly one line, starting with "Intermediate answer: ", with no additional text.
+#     4. Keep the answer concise and directly relevant to the follow-up question.
+
+# Output only the process after the given prompt. Do not repeat the given prompt in your response.
+
+# Example:
+
+# #
+# Question: What is the major railroad museum located in the location where Andre Bloc lived at his time of death?
+# Follow up: Where did André Bloc live when he died?
+# Document: André Bloc (Algiers, May 23, 1896 – New Delhi, November 8, 1966) was a French sculptor, magazine editor, and founder of several specialist journals. He founded the "Groupe Espace" in 1949.
+# Intermediate answer: André Bloc died in New Delhi.
+
+# #
+# Question: What is the least popular official language in the country where a spiral viaduct is located in Karin Thomas' birthplace?
+# Follow up: Where was Karin Thomas born?
+# Document: Karin Thomas (born 3 October 1961 in Brusio) was a Swiss cross country skier who competed from 1982 to 1988.
+# Intermediate answer: Karin Thomas was born in Brusio.
+
+# #
+# Question: What is the least popular official language in the country where a spiral viaduct is located in Karin Thomas' birthplace?
+# Follow up: In which country is a spiral viaduct is located in Brusio?
+# Document: Brusio spiral viaduct: A signature structure of the World Heritage-listed Bernina railway, it is located near Brusio, in the Canton of Graubünden, Switzerland.
+# Intermediate answer: The Brusio spiral viaduct is located in Switzerland.
+
+# #
+# Question: What is the least popular official language in the country where a spiral viaduct is located in Karin Thomas' birthplace?
+# Follow up: What is the least popular official language of Switzerland?
+# Document: Switzerland has four official languages: principally German (63.5% total population share), French (22.5%) in the west; and Italian (8.1%) in the south. The fourth official language, Romansh (0.5%), is a Romance language spoken locally in the southeastern trilingual canton of Graubünden.
+# Intermediate answer: The least popular official language of Switzerland is Romansh.
+
+# #
+# Question: When did hurricane Sandy hit the city where The Dealers' performer was born?
+# Follow up: Who is the performer of The Dealers?
+# Document: The Dealers is a 1964 album by jazz musician Mal Waldron released on Status Records, catalogue 8316. The album consists of unreleased takes from two sessions that resulted in two prior albums.
+# Intermediate answer: The Dealers is an album by Mal Waldron.
+
+# #
+# Question: When did hurricane Sandy hit the city where The Dealers' performer was born?
+# Follow up: Where was Mal Waldron born?
+# Document: Malcolm Earl "Mal" Waldron (August 16, 1925 – December 2, 2002) was an American jazz pianist, composer, and arranger. Mal Waldron was born in New York City on August 16, 1925, to West Indian immigrants.
+# Intermediate answer: Mal Waldron was born in New York City.
+
+# #
+# Question: When did hurricane Sandy hit the city where The Dealers' performer was born?
+# Follow up: When did hurricane sandy hit New York City?
+# Document: Effects of Hurricane Sandy in New York: Hurricane Sandy Category 1 hurricane (SSHWS / NWS) formed October 28, 2012 and dissipated November 2, 2012. Areas affected New York, especially the New York metropolitan area.
+# Intermediate answer: Hurricane sandy hit New York City on October 28, 2012.
+# """
+
 FINAL_ANSWER_GENERATION_PROMPT = """
 Given an original question and a series of follow up questions each paired with its top Wikipedia snippet plus your intermediate answers, generate the final answer to the original question.
 

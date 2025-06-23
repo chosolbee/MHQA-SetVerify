@@ -74,6 +74,7 @@ def run_batch(
             selected_doc = docs[scores.argmax()]
             new_history = history + [selected_doc]
             
+            ### Intermediate Answer 생성 시, trace 전체 입력
             new_trace = trace + f"\nDocument: {selected_doc['text']}"
 
             inter_traces, inter_answers = answer_generator.batch_generate_answers(
@@ -87,6 +88,41 @@ def run_batch(
                 print(f"|  Score: {scores.max():.4f}")
                 print(f"|  Document: {selected_doc['text'][:100]}...")
                 print(f"|  Intermediate Answer: {inter_answers[0]}\n")
+            ### Intermediate Answer 생성 시, trace 전체 입력
+
+            ### Intermediate Answer 생성 시, 가장 최근 query와 doc만 입력
+            # lines = trace.strip().split('\n')
+            # current_query = ""
+            # for line in reversed(lines):
+            #     if line.startswith("Follow up: "):
+            #         current_query = line[11:].strip()  # "Follow up: " 제거
+            #         break
+            
+            # # 최근 query + document만으로 intermediate answer 생성
+            # recent_trace = f"Follow up: {current_query}\nDocument: {selected_doc['text']}"
+
+            # if log_trace:
+            #     print(f"[TRACE] QID={question['id']} - Intermediate Answer Input")
+            #     print(f"|  Question: {question['question']}")
+            #     print(f"|  Recent Trace Input:\n{recent_trace}")
+            #     print(f"|  Selected Document Score: {scores.max():.4f}")
+            #     print(f"|  Document: {selected_doc['text'][:100]}...")
+            
+            # inter_traces, inter_answers = answer_generator.batch_generate_answers(
+            #     [question], [recent_trace], [False]
+            # )
+
+            # full_trace = trace + f"\nDocument: {selected_doc['text']}\nIntermediate answer: {inter_answers[0]}"
+    
+            # intermediate_traces.append((question, new_history, full_trace, selected_doc, scores.max(), inter_answers[0]))
+
+            # if log_trace:
+            #     print(f"|  Generated Intermediate Answer: {inter_answers[0]}")
+            #     print(f"|  Full Trace After Update:\n{full_trace}")
+            #     print("-" * 60)
+            ### Intermediate Answer 생성 시, 가장 최근 query와 doc만 입력
+                
+
 
         next_questions = []
         next_batch_history = []
