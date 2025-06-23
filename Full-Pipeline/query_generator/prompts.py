@@ -151,7 +151,8 @@ Process:
   1. Ask the next logical follow-up question, prefixed with "Follow up: ".
   2. Base it solely on gaps in the existing trace.
   3. Do not repeat information already covered.
-  4. Output only the new "Follow up: " line; no explanations or extra text.
+  4. Make sure each follow-up targets exactly the missing fact you need to answer the original question.
+  5. Output only the new "Follow up: " line; no explanations or extra text.
 
 Output only the process after the given prompt. Do not repeat the given prompt in your response.
 
