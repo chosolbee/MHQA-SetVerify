@@ -134,3 +134,62 @@ Context: Effects of Hurricane Sandy in New York: Hurricane Sandy Category 1 hurr
 Intermediate answer: Hurricane sandy hit New York City in October 28, 2012.
 So the final answer is: October 28, 2012
 """
+
+
+QUERY_GENERATION_PROMPT = """
+Given an original question, iteratively generate follow-up questions and intermediate answers using only the top Wikipedia snippet for each query.
+
+Process:
+- You receive:
+  - Question: <original question>  
+  - Zero or more rounds of:
+    - Follow up: <previous follow up question>  
+    - Document: <top Wikipedia snippet>  
+    - Intermediate answer: <answer to the Follow-up question based on the Document>
+
+- Your task:
+  1. Ask the next logical follow-up question, prefixed with "Follow up: ".
+  2. Base it solely on gaps in the existing trace.
+  3. Do not repeat information already covered.
+  4. Output only the new "Follow up: " line; no explanations or extra text.
+
+Output only the process after the given prompt. Do not repeat the given prompt in your response.
+
+Example:
+
+# First iteration (no trace)
+Question: What is the major railroad museum located in the location where Andre Bloc lived at his time of death?
+Follow up: Where did André Bloc live when he died?
+
+# First iteration (no trace)
+Question: What is the least popular official language in the country where a spiral viaduct is located in Karin Thomas' birthplace?
+Follow up: Where was Karin Thomas born?
+
+# Subsequent iteration (trace present)
+Question: What is the major railroad museum located in the location where Andre Bloc lived at his time of death?
+Follow up: Where did André Bloc live when he died?
+Document: André Bloc (Algiers, May 23, 1896 – New Delhi, November 8, 1966) was a French sculptor, magazine editor, and founder of several specialist journals. He founded the "Groupe Espace" in 1949.
+Intermediate answer: André Bloc was living in New Delhi when he died.
+Follow up: What is the name of the major railroad related museum located in New Delhi?
+
+# Subsequent iteration (trace present)
+Question: What is the least popular official language in the country where a spiral viaduct is located in Karin Thomas' birthplace?
+Follow up: Where was Karin Thomas born?
+Document: Karin Thomas (born 3 October 1961 in Brusio) was a Swiss cross country skier who competed from 1982 to 1988. She finished sixth in the 4 x 5 km relay at the 1984 Winter Olympics in Sarajevo and fourth in that same event at the 1988 Winter Olympics in Calgary.
+Intermediate answer: Karin Thomas was born in Brusio.
+Follow up: In which country is a spiral viaduct is located in Brusio?
+Document: Brusio spiral viaduct: A signature structure of the World Heritage-listed Bernina railway, it is located near Brusio, in the Canton of Graubünden, Switzerland, and was built to limit the railway's gradient at that location within its specified maximum of 7%.
+Intermediate answer: The Brusio spiral viaduct is located in Switzerland.
+Follow up: What is the least popular official language of Switzerland?
+
+# Subsequent iteration (trace present)
+Question: When did hurricane Sandy hit the city where The Dealers' performer was born?
+Follow up: Who is the performer of The Dealers?
+Document: The Dealers is a 1964 album by jazz musician Mal Waldron released on Status Records, catalogue 8316. The album consists of unreleased takes from two sessions that resulted in two prior albums. "Blue Calypso" and "Falling In Love With Love" are from the April 19, 1957 session that resulted in half of 1957 Waldron's "Mal/2" album; these tracks can currently be found as additional tracks on the CD reissue of that album. "Dealin'" and "Wheelin" are from a September 20, 1957 session, and are alternate takes of tracks originally released on the 1958 "Wheelin' & Dealin'" album (Prestige PRLP 7131); these tracks can currently be found as additional tracks on the CD reissue of that album. All tracks are also available as part of the 2009 John Coltrane's box set "Side Steps".
+Intermediate answer: The Dealers is an album by Mal Waldron.
+Follow up: Where was Mal Waldron born?
+Document: Malcolm Earl "Mal" Waldron (August 16, 1925 – December 2, 2002) was an American jazz pianist, composer, and arranger. Mal Waldron was born in New York City on August 16, 1925, to West Indian immigrants. His father was a mechanical engineer who worked on the Long Island Rail Road. The family moved to Jamaica, Queens when Mal was four years old. Waldron's parents discouraged his initial interest in jazz, but he was able to maintain it by listening to swing on the radio.
+Intermediate answer: Mal Waldron was born in New York City.
+Follow up: When did hurricane sandy hit New York City?
+
+"""
