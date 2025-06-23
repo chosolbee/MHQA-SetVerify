@@ -1,7 +1,7 @@
 import os
 import torch
 from vllm import LLM, SamplingParams
-from .prompts import SELF_ASK_SYSTEM_PROMPT, SELF_ASK_USER_PROMPT_FIRST, SELF_ASK_USER_PROMPT_NOT_FIRST
+from .prompts import SELF_ASK_SYSTEM_PROMPT
 
 
 class QueryGenerator:
@@ -9,6 +9,7 @@ class QueryGenerator:
         os.environ['MKL_THREADING_LAYER']='GNU'
 
         self.llm = llm
+        self.tokenizer = llm.get_tokenizer()
 
         self.sampling_params = SamplingParams(
             temperature=temperature,
@@ -18,25 +19,34 @@ class QueryGenerator:
 
         print("Model loaded successfully.")
 
-    def _gen_retriever_query_prompt(self, trace, is_first=False):
-        system_prompt = SELF_ASK_SYSTEM_PROMPT
-        user_prompt = trace + (SELF_ASK_USER_PROMPT_FIRST if is_first else SELF_ASK_USER_PROMPT_NOT_FIRST)
-        prompt = [
+    def _gen_retriever_query_prompt(self, question, trace):
+        chat = [
             {
                 "role": "system",
-                "content":  system_prompt.strip(),
+                "content": SELF_ASK_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
-                "content": user_prompt.strip(),
+                "content": question.strip(),
+            },
+            {
+                "role": "assistant",
+                "content": trace.strip(),
             },
         ]
-        return prompt
 
-    def batch_generate(self, traces, is_first=False):
-        prompts = [self._gen_retriever_query_prompt(trace, is_first) for trace in traces]
+        prompt = self.tokenizer.apply_chat_template(
+            chat,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
 
-        outputs = self.llm.chat(prompts, self.sampling_params)
+        return prompt[:-len("<|eot_id|>")] + "\n"
+
+    def batch_generate(self, questions, traces):
+        prompts = [self._gen_retriever_query_prompt(question["question"], trace) for question, trace in zip(questions, traces)]
+
+        outputs = self.llm.generate(prompts, self.sampling_params)
 
         new_traces = []
         responses = []
@@ -80,15 +90,10 @@ def test():
         top_p=0.9,
     )
 
-    traces = [(
-        "Question: Country A has an embassy from the country that produces the show Krystala. Who was a prominent figure in the radio division of the network that created a version of the Biggest Loser for country A?\n"
-        "Are follow up questions needed here: Yes.\n"
-        "Follow up: Which country produces the show Krystala?\n"
-        "Context: Krystala is a daily fantasy/sci-fi/adventure/soap opera serial (superserye/fantaserye) from the Philippines, where it was produced by and aired on ABS-CBN from October 11, 2004 to April 22, 2005. The show also aired simultaneously on The Filipino Channel and on a one-week delay on International Channel (now AZN-TV) in the United States.\n"
-    )]
-    is_first = False
+    questions = ["What county is the city where Peter Kern died in?"]
+    traces = ["Follow up: Where did Peter Kern die?\nContext: Peter Kern (American businessman) Peter Kern (October 31, 1835 – October 28, 1907) was a German-born American businessman and politician active in Knoxville, Tennessee, USA, in the late 19th and early 20th centuries. He is best known as the founder of the confections company that eventually evolved into Kern's Bakery, a brand still marketed in the Knoxville area. The company's former confectionery and ice cream parlor, now called the Mall Building (or Oliver Hotel), still dominates the southwest corner of Market Square. Kern served as Knoxville's mayor from 1890 until 1892. Kern was born in Zwingenberg (near Heidelberg) in Germany\nIntermediate answer: Peter Kern died in Knoxville, Tennessee.\nFollow up: In what county is Knoxville, Tennessee located?\nContext: Knoxville, Tennessee Knoxville is a city in the U.S. state of Tennessee, and the county seat of Knox County. The city had an estimated population of 186,239 in 2016 and a population of 178,874 as of the 2010 census, making it the state's third largest city in the state after Nashville and Memphis. Knoxville is the principal city of the Knoxville Metropolitan Statistical Area, which, in 2016, was 868,546, up 0.9 percent, or 7,377 people, from to 2015. The KMSA is, in turn, the central component of the Knoxville-Sevierville-La Follette Combined Statistical Area, which, in 2013, had a population of"]
 
-    new_traces, responses, is_query_list = query_generator.batch_generate(traces, is_first)
+    new_traces, responses, is_query_list = query_generator.batch_generate(questions, traces)
     for trace, query, is_query in zip(new_traces, responses, is_query_list):
         print("Trace: ")
         print(trace)
