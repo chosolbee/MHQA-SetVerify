@@ -30,11 +30,10 @@ def run_batch(
     stop_log_path: str = None,
     log_trace: bool = False
 ) -> Tuple[List[Dict[str, Any]], List[List[Dict[str, Any]]], List[str], Dict[str, List[List[float]]]]:
-    
+
     final_questions = []
     final_batch_history = []
     final_traces = []
-    final_predictions = []
 
     batch_history = [[] for _ in range(len(questions))]
     traces = ["" for _ in questions]
@@ -53,7 +52,7 @@ def run_batch(
             for q, query, tr in zip(questions, search_queries, traces):
                 print(f"[TRACE] Question: {q['question']}")
                 print(f"|  Generated Query: {query}")
-                print(f"|  Current Trace:\n{tr}\n")
+                print(f"|  Current Trace:{tr}\n")
 
         search_batch_size = 16
         batch_docs = []
@@ -63,100 +62,54 @@ def run_batch(
 
         batch_scores = reranker.batch_rank(search_queries, batch_docs)
 
-        intermediate_traces = []
-        for idx, (question, history, trace, docs, scores) in enumerate(
-            zip(questions, batch_history, traces, batch_docs, batch_scores)
-        ):
+        selected_docs = []
+        for question, history, trace, docs, scores in zip(questions, batch_history, traces, batch_docs, batch_scores):
             for i, doc in enumerate(docs):
                 if doc["id"] in {d["id"] for d in history}:
                     scores[i] = float("-inf")
-            
+
             selected_doc = docs[scores.argmax()]
-            new_history = history + [selected_doc]
-            
-            ### Intermediate Answer 생성 시, trace 전체 입력
-            # new_trace = trace + f"\nDocument: {selected_doc['text']}"
+            history.append(selected_doc)
+            selected_docs.append(selected_doc)
 
-            # inter_traces, inter_answers = answer_generator.batch_generate_answers(
-            #     [question], [new_trace], [False]
-            # )
-            # inter_trace = inter_traces[0]
-            # intermediate_traces.append((question, new_history, inter_trace, selected_doc, scores.max(), inter_answers[0]))
-
-            # if log_trace:
-            #     print(f"[TRACE] QID={question['id']} - Selected Document")
-            #     print(f"|  Score: {scores.max():.4f}")
-            #     print(f"|  Document: {selected_doc['text'][:100]}...")
-            #     print(f"|  Intermediate Answer: {inter_answers[0]}\n")
-            ### Intermediate Answer 생성 시, trace 전체 입력
-
-            ### Intermediate Answer 생성 시, 가장 최근 query와 doc만 입력
-            lines = trace.strip().split('\n')
-            current_query = ""
-            for line in reversed(lines):
-                if line.startswith("Follow up: "):
-                    current_query = line[11:].strip()  # "Follow up: " 제거
-                    break
-            
-            # 최근 query + document만으로 intermediate answer 생성
-            recent_trace = f"Question: {current_query}\nDocument: {selected_doc['text']}"
-
-            if log_trace:
-                print(f"[TRACE] QID={question['id']} - Intermediate Answer Input")
+        inter_answers = answer_generator.batch_generate_intermediate_answers(search_queries, selected_docs)
+        if log_trace:
+            for question, query, doc, answer in zip(questions, search_queries, selected_docs, inter_answers):
+                print(f"[TRACE] QID={question['id']} - Intermediate Answer Generation")
                 print(f"|  Question: {question['question']}")
-                print(f"|  Recent Trace Input:\n{recent_trace}")
-                print(f"|  Selected Document Score: {scores.max():.4f}")
-                print(f"|  Document: {selected_doc['text'][:100]}...")
-            
-            inter_traces, inter_answers = answer_generator.batch_generate_answers(
-                [None], [recent_trace], [False]
-            )
+                print(f"|  Query: {query}")
+                print(f"|  Document: {doc['text'][:100]}...")
+                print(f"|  Generated Intermediate Answer: {answer}")
+                print()
 
-            full_trace = trace + f"\nDocument: {selected_doc['text']}\nIntermediate answer: {inter_answers[0]}"
-    
-            intermediate_traces.append((question, new_history, full_trace, selected_doc, scores.max(), inter_answers[0]))
-
-            if log_trace:
-                print(f"|  Generated Intermediate Answer: {inter_answers[0]}")
-                print(f"|  Full Trace After Update:\n{full_trace}")
-                print("-" * 60)
-            ### Intermediate Answer 생성 시, 가장 최근 query와 doc만 입력
+        traces = [
+            trace + f"\nDocument: {doc['text']}\nIntermediate answer: {answer}"
+            for trace, doc, answer in zip(traces, selected_docs, inter_answers)
+        ]
+        stop_decisions = stop_decider.batch_decide(questions, traces)
 
         next_questions = []
         next_batch_history = []
         next_traces = []
 
-        stop_traces = [item[2] for item in intermediate_traces]
-        stop_decisions = stop_decider.batch_decide(questions, stop_traces)
-
-        for (question, new_history, inter_trace, selected_doc, score, inter_answer), decision in zip(
-            intermediate_traces, stop_decisions
-        ):
+        for question, history, trace, decision in zip(questions, batch_history, traces, stop_decisions):
             if log_trace:
                 print(f"[TRACE] QID={question['id']} - Stop Decision: {decision}")
-
+            
             if decision == "STOP":
-                final_traces_, final_answers = answer_generator.batch_generate_answers(
-                    [question], [inter_trace], [True]
-                )
-                
                 final_questions.append(question)
-                final_batch_history.append(new_history)
-                final_traces.append(final_traces_[0])
-                final_predictions.append(final_answers[0])
+                final_batch_history.append(history)
+                final_traces.append(trace)
                 
                 stop_logs.append({
                     "question_id": question["id"],
                     "gold_hop": len(question.get("question_decomposition", [])),
                     "stop_iter": iter_count + 1
                 })
-                
-                if log_trace:
-                    print(f"|  Final Answer: {final_answers[0]}\n")
             else:
                 next_questions.append(question)
-                next_batch_history.append(new_history)
-                next_traces.append(inter_trace)
+                next_batch_history.append(history)
+                next_traces.append(trace)
 
         questions = next_questions
         batch_history = next_batch_history
@@ -169,17 +122,12 @@ def run_batch(
         iter_count += 1
         if iter_count >= max_iterations:
             if questions:
-                print(f"Max iterations reached. Generating final answers for {len(questions)} remaining questions.")
-                
-                final_traces_, final_answers = answer_generator.batch_generate_answers(
-                    questions, traces, [True] * len(questions)
-                )
-                
+                print(f"Max iterations reached. {len(questions)} questions left.")
+
                 final_questions.extend(questions)
                 final_batch_history.extend(batch_history)
-                final_traces.extend(final_traces_)
-                final_predictions.extend(final_answers)
-                
+                final_traces.extend(traces)
+
                 for question in questions:
                     stop_logs.append({
                         "question_id": question["id"],
@@ -188,13 +136,16 @@ def run_batch(
                     })
             break
 
+    final_traces, final_predictions = answer_generator.batch_generate_final_answers(final_questions, final_traces)
+
     if log_trace:
         print("\nFinal Questions and History:\n")
-        for question, history in zip(final_questions, final_batch_history):
+        for question, history, prediction in zip(final_questions, final_batch_history, final_predictions):
             print(f"1. Question: {question['question']}")
             print("2. History:")
             for doc in history:
                 print(f"  Passage: {doc['text']}")
+            print(f"3. Prediction: {prediction}")
             print()
 
     em_list, precision_list, recall_list, f1_list = compute_retrieval_metrics(final_questions, final_batch_history, stop_logs)
