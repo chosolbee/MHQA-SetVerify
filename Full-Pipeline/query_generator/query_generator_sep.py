@@ -1,7 +1,7 @@
 import os
 import torch
 from vllm import LLM, SamplingParams
-from .prompts import QUERY_GENERATION_PROMPT
+from .prompts import QUERY_GENERATION_PROMPT, QUERY_GENERATION_USER_PROMPT
 import re
 
 class QueryGenerator:
@@ -27,32 +27,26 @@ class QueryGenerator:
             },
             {
                 "role": "user",
-                "content": question.strip(),
-            },
-            {
-                "role": "assistant",
-                "content": trace.strip(),
+                "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + QUERY_GENERATION_USER_PROMPT,
             },
         ]
 
         prompt = self.tokenizer.apply_chat_template(
             chat,
             tokenize=False,
-            add_generation_prompt=False,
+            add_generation_prompt=True,
         )
         # ### token수 확인
         # n_tokens = len(self.tokenizer.encode(prompt, add_special_tokens=False))
         # print(f"[TOKENS][QG] {n_tokens}")
 
-        return prompt[:-len("<|eot_id|>")] + "\n"
+        return prompt
     
     def extract_query(self, text):
-        for line in text.strip().splitlines():
-            line_text = line.strip()
-            low = line_text.lower()
-            if low.startswith("follow up: ") or low.startswith("follow-up: "):
-                return line_text[11:].strip()
-        return text.strip()
+        query = text.strip().splitlines()[0].strip()
+        if query.lower().startswith("follow up: ") or query.lower().startswith("follow-up: "):
+            query = query[11:].strip()
+        return query
 
     def batch_generate(self, questions: list[str], traces: list[str]) -> tuple[list[str], list[str]]:
         prompts = [
