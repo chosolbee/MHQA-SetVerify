@@ -1,22 +1,22 @@
 import os
-import torch
-from vllm import LLM, SamplingParams
+import asyncio
 from .prompts import STOP_DECISION_SYSTEM_PROMPT
+from modules import AsyncOpenAIProcessor
 
 class StopDecider:
-    def __init__(self, llm, max_gen_length=1000, temperature=0.3, top_p=0.9):
+    def __init__(self, llm, max_gen_length=200, temperature=0.3, top_p=0.9, provider="vllm"):
         os.environ['MKL_THREADING_LAYER']='GNU'
 
         self.llm = llm
-        self.tokenizer = llm.get_tokenizer()
+        self.max_gen_length = max_gen_length
+        self.temperature = temperature
+        self.top_p = top_p
+        self.provider = provider
 
-        self.sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_gen_length,
-        )
+        if self.provider == "vllm":
+            self.tokenizer = llm.get_tokenizer()
 
-        print("Stop Decider initialized successfully.")
+        print(f"Stop Decider - {self.provider} initialized successfully.")
 
     def _gen_stop_decision_prompt(self, question, trace):
         chat = [
@@ -34,16 +34,36 @@ class StopDecider:
             },
         ]
 
-        prompt = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        # ### token수 확인
-        # n_tokens = len(self.tokenizer.encode(prompt, add_special_tokens=False))
-        # print(f"[TOKENS][SD] {n_tokens}")
+        if self.provider == "vllm":
+            prompt = self.tokenizer.apply_chat_template(
+                chat,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            return prompt
+        else:
+            return chat
 
-        return prompt
+    def _process_prompts_vllm(self, prompts):
+        from vllm import SamplingParams
+
+        sampling_params = SamplingParams(
+            max_tokens=self.max_gen_length,
+            temperature=self.temperature,
+            top_p=self.top_p,
+        )
+        outputs = self.llm.generate(prompts, sampling_params)
+        
+        return [output.outputs[0].text.strip() for output in outputs]
+
+    async def _process_prompts_openai_async(self, prompts):
+        async with AsyncOpenAIProcessor(self.llm) as processor:
+            return await processor.process_prompts_async(
+                prompts,
+                max_gen_length=self.max_gen_length,
+                temperature=self.temperature,
+                top_p=self.top_p,
+            )
 
     def extract_decision(self, text):
         text_upper = text.strip().upper()
@@ -67,36 +87,33 @@ class StopDecider:
             return "CONTINUE"
         else:
             print("| STOP/CONTINUE: <DEFAULT CONTINUE>")
+            print(f" DECISION: {text.strip()}")
             return "CONTINUE"
 
     def batch_decide(self, questions, traces):
         prompts = [self._gen_stop_decision_prompt(question["question"], trace) for question, trace in zip(questions, traces)]
 
-        outputs = self.llm.generate(prompts, self.sampling_params) 
+        if self.provider == "vllm":
+            outputs = self._process_prompts_vllm(prompts)
+        elif self.provider == "openai":
+            outputs = asyncio.run(self._process_prompts_openai_async(prompts))
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}")
 
         decisions = []
         for output in outputs:
-            decision = self.extract_decision(output.outputs[0].text)
+            decision = self.extract_decision(output)
             decisions.append(decision)
 
         return decisions
 
-
-def test():
-    llm = LLM(
-        model="meta-llama/Llama-3.1-8B-Instruct",
-        tensor_parallel_size=1,
-        quantization=None,
-        dtype=torch.bfloat16,
-        gpu_memory_utilization=0.9,
-        trust_remote_code=True,
-    )
-
+def test(llm, provider):
     stop_decider = StopDecider(
         llm=llm,
         max_gen_length=50,
         temperature=0.3,
         top_p=0.9,
+        provider=provider,
     )
 
     questions = [{"question": "What county is the city where Peter Kern died in?"}]
@@ -115,6 +132,29 @@ def test():
         print("-" * 50)
     print("Test completed.")
 
-
 if __name__ == "__main__":
-    test()
+    # Test vLLM
+    import torch
+    from vllm import LLM
+
+    llm = LLM(
+        model="meta-llama/Llama-3.1-8B-Instruct",
+        tensor_parallel_size=1,
+        quantization=None,
+        dtype=torch.bfloat16,
+        gpu_memory_utilization=0.9,
+        trust_remote_code=True,
+    )
+
+    test(llm, "vllm")
+
+    # Test OpenAI
+    from modules import OpenAIConfig
+
+    llm = OpenAIConfig(
+        model_id="gpt-4o-mini-2024-07-18",
+        max_retries=1,
+        timeout=60,
+    )
+
+    test(llm, "openai")
