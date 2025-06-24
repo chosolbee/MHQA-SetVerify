@@ -11,7 +11,7 @@ from .prompts import (
 
 
 class AnswerGenerator:
-    def __init__(self, llm, max_gen_length=200, temperature=0.7, top_p=0.9):
+    def __init__(self, llm, max_gen_length=400, temperature=0.7, top_p=0.9):
         os.environ["MKL_THREADING_LAYER"] = "GNU"
 
         self.llm = llm

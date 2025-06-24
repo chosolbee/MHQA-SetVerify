@@ -228,7 +228,7 @@ def parse_args():
     answer_generator_group.add_argument("--ag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
 
     stop_decider_group = parser.add_argument_group("Stop Decider Options")
-    stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=200, help="Maximum generation length for stop decider")
+    stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=1000, help="Maximum generation length for stop decider")
     stop_decider_group.add_argument("--sd-temperature", type=float, default=0.1, help="Temperature for stop decider")
     stop_decider_group.add_argument("--sd-top-p", type=float, default=0.9, help="Top-p sampling for stop decider")
 
