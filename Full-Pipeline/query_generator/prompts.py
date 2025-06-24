@@ -136,7 +136,7 @@ So the final answer is: October 28, 2012
 """
 
 
-QUERY_GENERATION_PROMPT = """
+QUERY_GENERATION_SYSTEM_PROMPT = """
 Given an original question and a series of follow-up questions and answers, generate the next logical follow-up question that targets a specific missing piece of information needed to answer the original question.
 The question will be used to retrieve additional information from a knowledge base (e.g., Wikipedia).
 

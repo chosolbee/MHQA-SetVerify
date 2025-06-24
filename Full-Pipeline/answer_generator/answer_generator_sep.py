@@ -3,7 +3,12 @@ import re
 import torch
 from typing import List, Dict, Any, Tuple
 from vllm import LLM, SamplingParams
-from .prompts import INTERMEDIATE_ANSWER_GENERATION_PROMPT, FINAL_ANSWER_GENERATION_PROMPT, FINAL_ANSWER_GENERATION_USER_PROMPT
+from .prompts import (
+    INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT,
+    FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
+    FINAL_ANSWER_GENERATION_USER_PROMPT,
+)
+
 
 class AnswerGenerator:
     def __init__(self, llm, max_gen_length=200, temperature=0.7, top_p=0.9):
@@ -25,7 +30,7 @@ class AnswerGenerator:
         chat = [
             {
                 "role": "system",
-                "content": INTERMEDIATE_ANSWER_GENERATION_PROMPT,
+                "content": INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
@@ -49,7 +54,7 @@ class AnswerGenerator:
         chat = [
             {
                 "role": "system",
-                "content": FINAL_ANSWER_GENERATION_PROMPT,
+                "content": FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
             },
             {
                 "role": "user",

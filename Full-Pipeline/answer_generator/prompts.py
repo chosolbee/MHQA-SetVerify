@@ -135,7 +135,7 @@ Your Response:
 # """
 
 
-# INTERMEDIATE_ANSWER_GENERATION_PROMPT = """
+# INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT = """
 # Given an original question and a series of follow-up questions each paired with its top Wikipedia snippet, generate the next intermediate answer using only the latest snippet.
 
 # Process:
@@ -198,7 +198,7 @@ Your Response:
 
 
 ### intermediate answer 생성할 때 가장 최근 query, doc만 보도록
-INTERMEDIATE_ANSWER_GENERATION_PROMPT = """
+INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT = """
 Given a question with its corresponding Wikipedia snippet, generate an answer using only the provided snippet.
 
 Process:
@@ -267,7 +267,7 @@ Hurricane sandy hit New York City on October 28, 2012.
 """
 
 
-FINAL_ANSWER_GENERATION_PROMPT = """
+FINAL_ANSWER_GENERATION_SYSTEM_PROMPT = """
 Given an original question and a series of follow up questions each paired with its top Wikipedia snippet plus your intermediate answers, generate the final answer to the original question.
 
 Process:

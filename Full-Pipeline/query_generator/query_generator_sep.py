@@ -1,8 +1,8 @@
 import os
 import torch
 from vllm import LLM, SamplingParams
-from .prompts import QUERY_GENERATION_PROMPT, QUERY_GENERATION_USER_PROMPT
-import re
+from .prompts import QUERY_GENERATION_SYSTEM_PROMPT, QUERY_GENERATION_USER_PROMPT
+
 
 class QueryGenerator:
     def __init__(self, llm, max_gen_length=200, temperature=0.7, top_p=0.9):
@@ -23,7 +23,7 @@ class QueryGenerator:
         chat = [
             {
                 "role": "system",
-                "content": QUERY_GENERATION_PROMPT,
+                "content": QUERY_GENERATION_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
