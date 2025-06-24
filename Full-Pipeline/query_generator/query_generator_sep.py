@@ -42,7 +42,7 @@ class QueryGenerator:
         )
         outputs = self.llm.chat(prompts, sampling_params)
 
-        return [output.outputs[0].text for output in outputs]
+        return [output.outputs[0].text.strip() for output in outputs]
 
     async def _process_prompts_openai_async(self, prompts):
         async with AsyncOpenAIProcessor(self.llm) as processor:
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     from modules import OpenAIConfig
 
     llm = OpenAIConfig(
-        model_id="gpt-3.5-turbo-0125",
+        model_id="gpt-4o-mini-2024-07-18",
         max_retries=1,
         timeout=60,
     )

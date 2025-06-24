@@ -82,7 +82,7 @@ class AsyncOpenAIProcessor:
 
             processed_results = sorted(processed_results, key=lambda x: x['index'])
 
-            return [result["content"] for result in processed_results]
+            return [result["content"].strip() for result in processed_results]
         except asyncio.TimeoutError:
             print("[OpenAI] Batch processing timed out")
             return ["Error: Batch Timeout" for i in range(len(prompts))]

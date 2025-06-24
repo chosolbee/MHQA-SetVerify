@@ -96,12 +96,12 @@ def run_batch(
         for question, history, trace, decision in zip(questions, batch_history, traces, stop_decisions):
             if log_trace:
                 print(f"[TRACE] QID={question['id']} - Stop Decision: {decision}")
-            
+
             if decision == "STOP":
                 final_questions.append(question)
                 final_batch_history.append(history)
                 final_traces.append(trace)
-                
+
                 stop_logs.append({
                     "question_id": question["id"],
                     "gold_hop": len(question.get("question_decomposition", [])),
@@ -157,7 +157,7 @@ def run_batch(
                 f.write(json.dumps(log, ensure_ascii=False) + '\n')
 
     ans_em_list, ans_f1_list = compute_answer_metrics(final_questions, final_predictions)
-    
+
     if traces_path:
         all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions)
         with open(traces_path, 'a', encoding='utf-8') as f:
@@ -218,7 +218,7 @@ def parse_args():
     vllm_group.add_argument("--vllm-max-model-len", type=int, default=8192, help="Maximum model length for vLLM")
 
     openai_group = parser.add_argument_group("OpenAI Options")
-    openai_group.add_argument("--openai-model-id", type=str, default="gpt-3.5-turbo-0125", help="Model ID for OpenAI")  # gpt-4o-mini-2024-07-18
+    openai_group.add_argument("--openai-model-id", type=str, default="gpt-4o-mini-2024-07-18", help="Model ID for OpenAI")
     openai_group.add_argument("--openai-max-retries", type=int, default=1, help="Maximum retries for OpenAI requests")
     openai_group.add_argument("--openai-batch-timeout", type=int, default=600, help="Batch timeout for OpenAI requests")
     openai_group.add_argument("--openai-total-timeout", type=int, default=60, help="Total timeout for OpenAI requests")
@@ -242,7 +242,7 @@ def parse_args():
     answer_generator_group.add_argument("--ag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
     answer_generator_group.add_argument("--ag-temperature", type=float, default=0.7, help="Temperature for answer generator")
     answer_generator_group.add_argument("--ag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
-    # answer_generator_group.add_argument("--ag-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for answer generator")
+    answer_generator_group.add_argument("--ag-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for answer generator")
 
     stop_decider_group = parser.add_argument_group("Stop Decider Options")
     stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=200, help="Maximum generation length for stop decider")
@@ -316,10 +316,11 @@ def main(args: argparse.Namespace):
     )
 
     answer_generator = AnswerGenerator(
-        llm=vllm_agent,
+        llm=vllm_agent if args.ag_provider == "vllm" else openai_config,
         max_gen_length=args.ag_max_gen_length,
         temperature=args.ag_temperature,
         top_p=args.ag_top_p,
+        provider=args.ag_provider,
     )
 
     stop_decider = StopDecider(
