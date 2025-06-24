@@ -3,7 +3,12 @@ import re
 import torch
 from typing import List, Dict, Any, Tuple
 from vllm import LLM, SamplingParams
-from .prompts import INTERMEDIATE_ANSWER_GENERATION_PROMPT, FINAL_ANSWER_GENERATION_PROMPT
+from .prompts import (
+    INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT,
+    FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
+    FINAL_ANSWER_GENERATION_USER_PROMPT,
+)
+
 
 class AnswerGenerator:
     def __init__(self, llm, max_gen_length=200, temperature=0.7, top_p=0.9):
@@ -20,27 +25,15 @@ class AnswerGenerator:
 
         print("Answer Generator initialized successfully.")
 
-    def _extract_answer(self, text: str, final: bool) -> str:
-        prefix = "Final answer:" if final else "Intermediate answer:"
-        for line in text.strip().splitlines():
-            line = line.strip()
-            if line.startswith(prefix):
-                return line[len(prefix):].strip()
-        return text.strip()
-
-    def _gen_intermediate_answer_prompt(self, question: str, trace: str) -> str:
+    def _gen_intermediate_answer_prompt(self, trace: str) -> str:
         """Generate prompt for intermediate answer generation"""
         chat = [
             {
                 "role": "system",
-                "content": INTERMEDIATE_ANSWER_GENERATION_PROMPT,
+                "content": INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
-                "content": question.strip(),
-            },
-            {
-                "role": "assistant",
                 "content": trace.strip(),
             },
         ]
@@ -61,15 +54,11 @@ class AnswerGenerator:
         chat = [
             {
                 "role": "system",
-                "content": FINAL_ANSWER_GENERATION_PROMPT,
+                "content": FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
-                "content": question.strip(),
-            },
-            {
-                "role": "assistant",
-                "content": trace.strip(),
+                "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + FINAL_ANSWER_GENERATION_USER_PROMPT,
             },
         ]
         
@@ -93,7 +82,7 @@ class AnswerGenerator:
             if final:
                 prompt = self._gen_final_answer_prompt(question["question"], trace)
             else:
-                prompt = self._gen_intermediate_answer_prompt(question["question"], trace)
+                prompt = self._gen_intermediate_answer_prompt(trace)
             prompts.append(prompt)
         
         outputs = self.llm.generate(prompts, self.sampling_params)
@@ -102,8 +91,7 @@ class AnswerGenerator:
         answers = []
         
         for trace, output, final in zip(traces, outputs, is_final):
-            answer = output.outputs[0].text
-            answer = self._extract_answer(answer, final)
+            answer = output.outputs[0].text.strip()
             
             tag = "Final answer:" if final else "Intermediate answer:"
             new_traces.append(f"{trace}\n{tag} {answer}")

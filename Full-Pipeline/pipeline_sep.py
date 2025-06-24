@@ -75,54 +75,52 @@ def run_batch(
             new_history = history + [selected_doc]
             
             ### Intermediate Answer 생성 시, trace 전체 입력
-            new_trace = trace + f"\nDocument: {selected_doc['text']}"
+            # new_trace = trace + f"\nDocument: {selected_doc['text']}"
 
-            inter_traces, inter_answers = answer_generator.batch_generate_answers(
-                [question], [new_trace], [False]
-            )
-            inter_trace = inter_traces[0]
-            intermediate_traces.append((question, new_history, inter_trace, selected_doc, scores.max(), inter_answers[0]))
+            # inter_traces, inter_answers = answer_generator.batch_generate_answers(
+            #     [question], [new_trace], [False]
+            # )
+            # inter_trace = inter_traces[0]
+            # intermediate_traces.append((question, new_history, inter_trace, selected_doc, scores.max(), inter_answers[0]))
 
-            if log_trace:
-                print(f"[TRACE] QID={question['id']} - Selected Document")
-                print(f"|  Score: {scores.max():.4f}")
-                print(f"|  Document: {selected_doc['text'][:100]}...")
-                print(f"|  Intermediate Answer: {inter_answers[0]}\n")
+            # if log_trace:
+            #     print(f"[TRACE] QID={question['id']} - Selected Document")
+            #     print(f"|  Score: {scores.max():.4f}")
+            #     print(f"|  Document: {selected_doc['text'][:100]}...")
+            #     print(f"|  Intermediate Answer: {inter_answers[0]}\n")
             ### Intermediate Answer 생성 시, trace 전체 입력
 
             ### Intermediate Answer 생성 시, 가장 최근 query와 doc만 입력
-            # lines = trace.strip().split('\n')
-            # current_query = ""
-            # for line in reversed(lines):
-            #     if line.startswith("Follow up: "):
-            #         current_query = line[11:].strip()  # "Follow up: " 제거
-            #         break
+            lines = trace.strip().split('\n')
+            current_query = ""
+            for line in reversed(lines):
+                if line.startswith("Follow up: "):
+                    current_query = line[11:].strip()  # "Follow up: " 제거
+                    break
             
-            # # 최근 query + document만으로 intermediate answer 생성
-            # recent_trace = f"Follow up: {current_query}\nDocument: {selected_doc['text']}"
+            # 최근 query + document만으로 intermediate answer 생성
+            recent_trace = f"Question: {current_query}\nDocument: {selected_doc['text']}"
 
-            # if log_trace:
-            #     print(f"[TRACE] QID={question['id']} - Intermediate Answer Input")
-            #     print(f"|  Question: {question['question']}")
-            #     print(f"|  Recent Trace Input:\n{recent_trace}")
-            #     print(f"|  Selected Document Score: {scores.max():.4f}")
-            #     print(f"|  Document: {selected_doc['text'][:100]}...")
+            if log_trace:
+                print(f"[TRACE] QID={question['id']} - Intermediate Answer Input")
+                print(f"|  Question: {question['question']}")
+                print(f"|  Recent Trace Input:\n{recent_trace}")
+                print(f"|  Selected Document Score: {scores.max():.4f}")
+                print(f"|  Document: {selected_doc['text'][:100]}...")
             
-            # inter_traces, inter_answers = answer_generator.batch_generate_answers(
-            #     [question], [recent_trace], [False]
-            # )
+            inter_traces, inter_answers = answer_generator.batch_generate_answers(
+                [None], [recent_trace], [False]
+            )
 
-            # full_trace = trace + f"\nDocument: {selected_doc['text']}\nIntermediate answer: {inter_answers[0]}"
+            full_trace = trace + f"\nDocument: {selected_doc['text']}\nIntermediate answer: {inter_answers[0]}"
     
-            # intermediate_traces.append((question, new_history, full_trace, selected_doc, scores.max(), inter_answers[0]))
+            intermediate_traces.append((question, new_history, full_trace, selected_doc, scores.max(), inter_answers[0]))
 
-            # if log_trace:
-            #     print(f"|  Generated Intermediate Answer: {inter_answers[0]}")
-            #     print(f"|  Full Trace After Update:\n{full_trace}")
-            #     print("-" * 60)
+            if log_trace:
+                print(f"|  Generated Intermediate Answer: {inter_answers[0]}")
+                print(f"|  Full Trace After Update:\n{full_trace}")
+                print("-" * 60)
             ### Intermediate Answer 생성 시, 가장 최근 query와 doc만 입력
-                
-
 
         next_questions = []
         next_batch_history = []
@@ -264,7 +262,7 @@ def parse_args():
     query_generator_group.add_argument("--qg-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for query generator")
     query_generator_group.add_argument("--qg-tp-size", type=int, default=1, help="Tensor parallel size for query generator")
     query_generator_group.add_argument("--qg-quantization", type=str, help="Quantization method for query generator")
-    query_generator_group.add_argument("--qg-max-gen-length", type=int, default=100, help="Maximum generation length for query generator")
+    query_generator_group.add_argument("--qg-max-gen-length", type=int, default=200, help="Maximum generation length for query generator")
     query_generator_group.add_argument("--qg-temperature", type=float, default=0.7, help="Temperature for query generator")
     query_generator_group.add_argument("--qg-top-p", type=float, default=0.9, help="Top-p sampling for query generator")
 
@@ -274,12 +272,12 @@ def parse_args():
     reranker_group.add_argument("--reranker-max-length", type=int, default=DEBERTA_MAX_LENGTH, help="Maximum length for reranker input")
 
     answer_generator_group = parser.add_argument_group("Answer Generator Options")
-    answer_generator_group.add_argument("--ag-max-gen-length", type=int, default=200, help="Maximum generation length for answer generator")
+    answer_generator_group.add_argument("--ag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
     answer_generator_group.add_argument("--ag-temperature", type=float, default=0.7, help="Temperature for answer generator")
     answer_generator_group.add_argument("--ag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
 
     stop_decider_group = parser.add_argument_group("Stop Decider Options")
-    stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=50, help="Maximum generation length for stop decider")
+    stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=200, help="Maximum generation length for stop decider")
     stop_decider_group.add_argument("--sd-temperature", type=float, default=0.1, help="Temperature for stop decider")
     stop_decider_group.add_argument("--sd-top-p", type=float, default=0.9, help="Top-p sampling for stop decider")
 
