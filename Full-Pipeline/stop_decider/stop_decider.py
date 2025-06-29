@@ -1,6 +1,8 @@
 import os
+import sys
 import asyncio
 from .prompts import STOP_DECISION_SYSTEM_PROMPT
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from modules import AsyncOpenAIProcessor
 
 class StopDecider:
@@ -8,9 +10,11 @@ class StopDecider:
         os.environ['MKL_THREADING_LAYER']='GNU'
 
         self.llm = llm
+
         self.max_gen_length = max_gen_length
         self.temperature = temperature
         self.top_p = top_p
+
         self.provider = provider
 
         if self.provider == "vllm":
@@ -53,7 +57,7 @@ class StopDecider:
             top_p=self.top_p,
         )
         outputs = self.llm.generate(prompts, sampling_params)
-        
+
         return [output.outputs[0].text.strip() for output in outputs]
 
     async def _process_prompts_openai_async(self, prompts):

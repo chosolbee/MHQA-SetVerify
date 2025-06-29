@@ -1,1 +1,1 @@
-from .openai import OpenAIConfig, AsyncOpenAIProcessor
+from .openai import AsyncOpenAIConfig, AsyncOpenAIProcessor

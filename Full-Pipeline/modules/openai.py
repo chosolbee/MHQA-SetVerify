@@ -5,7 +5,7 @@ from openai import AsyncOpenAI
 
 
 @dataclass
-class OpenAIConfig:
+class AsyncOpenAIConfig:
     model_id: str
     max_retries: int = 1
     batch_timeout: int = 600  # seconds
@@ -18,7 +18,7 @@ class OpenAIConfig:
 
 
 class AsyncOpenAIProcessor:
-    def __init__(self, config: OpenAIConfig):
+    def __init__(self, config: AsyncOpenAIConfig):
         self.config = config
         self.client = None
 

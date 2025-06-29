@@ -1,4 +1,5 @@
 import os
+import sys
 from typing import List, Dict, Any, Tuple
 import asyncio
 from .prompts import (
@@ -6,6 +7,7 @@ from .prompts import (
     FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
     FINAL_ANSWER_GENERATION_USER_PROMPT,
 )
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from modules import AsyncOpenAIProcessor
 
 
@@ -21,7 +23,7 @@ class AnswerGenerator:
 
         self.provider = provider
 
-        print("Answer Generator initialized successfully.")
+        print(f"Answer Generator - {self.provider} initialized successfully.")
 
     def _gen_intermediate_answer_prompt(self, trace: str) -> str:
         """Generate prompt for intermediate answer generation"""
@@ -118,12 +120,13 @@ class AnswerGenerator:
         return new_traces[0], answers[0]
 
 
-def test(llm):
+def test(llm, provider):
     answer_generator = AnswerGenerator(
         llm=llm,
         max_gen_length=200,
         temperature=0.7,
         top_p=0.9,
+        provider=provider,
     )
 
     print("\n=== Testing Intermediate Answer Generation ===")
@@ -173,15 +176,15 @@ if __name__ == "__main__":
         trust_remote_code=True,
     )
 
-    test(llm)
+    test(llm, "vllm")
 
     # Test OpenAI
-    from modules import OpenAIConfig
+    from modules import AsyncOpenAIConfig
 
-    llm = OpenAIConfig(
+    llm = AsyncOpenAIConfig(
         model_id="gpt-4o-mini-2024-07-18",
         max_retries=1,
         timeout=60,
     )
 
-    test(llm)
+    test(llm, "openai")

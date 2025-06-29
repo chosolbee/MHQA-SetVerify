@@ -1,6 +1,8 @@
 import os
+import sys
 import asyncio
 from .prompts import QUERY_GENERATION_SYSTEM_PROMPT, QUERY_GENERATION_USER_PROMPT
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from modules import AsyncOpenAIProcessor
 
 
@@ -16,7 +18,7 @@ class QueryGenerator:
 
         self.provider = provider
 
-        print("Query Generator loaded successfully.")
+        print(f"Query Generator - {self.provider} loaded successfully.")
 
     def _gen_retriever_query_prompt(self, question, trace):
         chat = [
@@ -83,13 +85,13 @@ class QueryGenerator:
         return new_traces, queries
 
 
-def test(llm):
+def test(llm, provider):
     query_generator = QueryGenerator(
         llm=llm,
         max_gen_length=2048,
         temperature=0.7,
         top_p=0.9,
-        provider="openai",
+        provider="provider",
     )
 
     questions = [{"question": "What county is the city where Peter Kern died in?"}]
@@ -129,15 +131,15 @@ if __name__ == "__main__":
         trust_remote_code=True,
     )
 
-    test(llm)
+    test(llm, "vllm")
 
     # Test OpenAI
-    from modules import OpenAIConfig
+    from modules import AsyncOpenAIConfig
 
-    llm = OpenAIConfig(
+    llm = AsyncOpenAIConfig(
         model_id="gpt-4o-mini-2024-07-18",
         max_retries=1,
         timeout=60,
     )
 
-    test(llm)
+    test(llm, "openai")

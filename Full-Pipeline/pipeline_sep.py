@@ -10,7 +10,7 @@ import wandb
 
 from config import WANDB_ENTITY, DEBERTA_MAX_LENGTH
 from .utils import print_metrics, compute_retrieval_metrics, compute_answer_metrics, compute_all_answer_metrics
-from .modules import OpenAIConfig
+from .modules import AsyncOpenAIConfig
 from .contriever import Retriever
 from .query_generator.query_generator_sep import QueryGenerator
 from .verifier import Reranker
@@ -22,7 +22,8 @@ def run_batch(
     retriever: Retriever,
     query_generator: QueryGenerator,
     reranker: Reranker,
-    answer_generator: AnswerGenerator,
+    intermediate_answer_generator: AnswerGenerator,
+    final_answer_generator: AnswerGenerator,
     stop_decider: StopDecider,
     questions: List[Dict[str, Any]],
     max_iterations: int = 5,
@@ -73,7 +74,7 @@ def run_batch(
             history.append(selected_doc)
             selected_docs.append(selected_doc)
 
-        inter_answers = answer_generator.batch_generate_intermediate_answers(search_queries, selected_docs)
+        inter_answers = intermediate_answer_generator.batch_generate_intermediate_answers(search_queries, selected_docs)
         if log_trace:
             for question, query, doc, answer in zip(questions, search_queries, selected_docs, inter_answers):
                 print(f"[TRACE] QID={question['id']} - Intermediate Answer Generation")
@@ -137,7 +138,7 @@ def run_batch(
                     })
             break
 
-    final_traces, final_predictions = answer_generator.batch_generate_final_answers(final_questions, final_traces)
+    final_traces, final_predictions = final_answer_generator.batch_generate_final_answers(final_questions, final_traces)
 
     if log_trace:
         print("\nFinal Questions and History:\n")
@@ -290,7 +291,7 @@ def main(args: argparse.Namespace):
         max_model_len=args.vllm_max_model_len,
     )
 
-    openai_config = OpenAIConfig(
+    openai_config = AsyncOpenAIConfig(
         model_id=args.openai_model_id,
         max_retries=args.openai_max_retries,
         batch_timeout=args.openai_batch_timeout,
@@ -315,12 +316,20 @@ def main(args: argparse.Namespace):
         max_length=args.reranker_max_length,
     )
 
-    answer_generator = AnswerGenerator(
+    intermediate_answer_generator = AnswerGenerator(
         llm=vllm_agent if args.ag_provider == "vllm" else openai_config,
         max_gen_length=args.ag_max_gen_length,
         temperature=args.ag_temperature,
         top_p=args.ag_top_p,
         provider=args.ag_provider,
+    )
+
+    final_answer_generator = AnswerGenerator(
+        llm=vllm_agent,
+        max_gen_length=args.ag_max_gen_length,
+        temperature=args.ag_temperature,
+        top_p=args.ag_top_p,
+        provider="vllm",
     )
 
     stop_decider = StopDecider(
@@ -368,7 +377,8 @@ def main(args: argparse.Namespace):
             retriever=retriever,
             query_generator=query_generator,
             reranker=reranker,
-            answer_generator=answer_generator,
+            intermediate_answer_generator=intermediate_answer_generator,
+            final_answer_generator=final_answer_generator,
             stop_decider=stop_decider,
             questions=batch_questions,
             max_iterations=args.max_iterations,
