@@ -12,7 +12,7 @@ from pipeline.answer_generator.prompts import (
 )
 
 
-def gen_final_answer_prompt(question: str, trace: str, tokenizer) -> str:
+def gen_final_answer_prompt(question: str, trace: str) -> str:
     chat = [
         {
             "role": "system",
@@ -24,11 +24,12 @@ def gen_final_answer_prompt(question: str, trace: str, tokenizer) -> str:
         },
     ]
 
-    return tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
+    return chat
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Extract partial traces from the dataset")
+    parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for computing scores")
     parser.add_argument("--input-path", type=str, required=True, help="Path to the input JSONL file")
     parser.add_argument("--output-path", type=str, required=True, help="Path to the output JSONL file")
     parser.add_argument("--temperature", type=float, default=0.7, help="Temperature for calculating probabilities")
@@ -38,21 +39,16 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}", flush=True)
-
-    model_name = "meta-llama/Llama-3.1-8B-Instruct"
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_name,
+        args.model_id,
         torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
         tp_plan="auto",
-    ).to(device)
+    )
 
     print("Model and tokenizer loaded successfully.", flush=True)
 
@@ -66,11 +62,12 @@ if __name__ == "__main__":
     for trace in traces:
         question = trace["question"]
         trace_text = trace["trace"]
-        prompt = gen_final_answer_prompt(question, trace_text, tokenizer)
+        chat = gen_final_answer_prompt(question, trace_text)
+        prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
         prompts.append(prompt)
         answer = trace["answers"][0]
         completions.append(answer)
-    
+
     print(f"Number of prompts: {len(prompts)}", flush=True)
     print(f"Number of completions: {len(completions)}", flush=True)
 
@@ -83,11 +80,14 @@ if __name__ == "__main__":
         prompt_token_counts = [len(tokenizer.encode(p)) for p in batch_prompts]
 
         combined_texts = [p + c for p, c in zip(batch_prompts, batch_completions)]
-        inputs = tokenizer(combined_texts, padding=True, return_tensors="pt").to(device)
+        inputs = tokenizer(combined_texts, padding=True, return_tensors="pt").to(model.device)
 
         with torch.no_grad():
             outputs = model(**inputs)
-            logits = outputs.logits / args.temperature
+
+        logits = outputs.logits
+        del outputs
+        logits /= args.temperature
 
         all_total_log_probs = []
         all_probs = []
@@ -114,7 +114,7 @@ if __name__ == "__main__":
                 trace["prob"] = p.item()
                 f.write(json.dumps(trace, ensure_ascii=False) + "\n")
 
-            del completion_logits, completion_token_ids
+            del completion_logits, completion_token_ids, log_probs, completion_log_probs
 
-        del inputs, outputs, logits
+        del logits
         torch.cuda.empty_cache()
