@@ -1,29 +1,29 @@
 import os
-import re
-import torch
+import sys
 from typing import List, Dict, Any, Tuple
-from vllm import LLM, SamplingParams
+import asyncio
 from .prompts import (
     INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT,
     FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
     FINAL_ANSWER_GENERATION_USER_PROMPT,
 )
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from modules import AsyncOpenAIProcessor
 
 
 class AnswerGenerator:
-    def __init__(self, llm, max_gen_length=400, temperature=0.7, top_p=0.9):
+    def __init__(self, llm, max_gen_length=400, temperature=0.7, top_p=0.9, provider="vllm"):
         os.environ["MKL_THREADING_LAYER"] = "GNU"
 
         self.llm = llm
-        self.tokenizer = llm.get_tokenizer()
 
-        self.sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_gen_length,
-        )
+        self.max_gen_length = max_gen_length
+        self.temperature = temperature
+        self.top_p = top_p
 
-        print("Answer Generator initialized successfully.")
+        self.provider = provider
+
+        print(f"Answer Generator - {self.provider} initialized successfully.")
 
     def _gen_intermediate_answer_prompt(self, trace: str) -> str:
         """Generate prompt for intermediate answer generation"""
@@ -38,16 +38,7 @@ class AnswerGenerator:
             },
         ]
 
-        prompt = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        # ### token수 확인
-        # n_tokens = len(self.tokenizer.encode(prompt, add_special_tokens=False))
-        # print(f"[TOKENS][AG_Inter] {n_tokens}")
-
-        return prompt
+        return chat
 
     def _gen_final_answer_prompt(self, question: str, trace: str) -> str:
         """Generate prompt for final answer generation"""
@@ -62,25 +53,41 @@ class AnswerGenerator:
             },
         ]
 
-        prompt = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=False,
-            add_generation_prompt=True,
+        return chat
+
+    def _process_prompts_vllm(self, prompts):
+        from vllm import SamplingParams
+
+        sampling_params = SamplingParams(
+            max_tokens=self.max_gen_length,
+            temperature=self.temperature,
+            top_p=self.top_p,
         )
+        outputs = self.llm.chat(prompts, sampling_params)
 
-        # ### token수 확인
-        # n_tokens = len(self.tokenizer.encode(prompt, add_special_tokens=False))
-        # print(f"[TOKENS][AG_final] {n_tokens}")
+        return [output.outputs[0].text.strip() for output in outputs]
 
-        return prompt
+    async def _process_prompts_openai_async(self, prompts):
+        async with AsyncOpenAIProcessor(self.llm) as processor:
+            return await processor.process_prompts_async(
+                prompts,
+                max_gen_length=self.max_gen_length,
+                temperature=self.temperature,
+                top_p=self.top_p,
+            )
 
     def batch_generate_intermediate_answers(self, queries: List[str], docs: List[str]) -> List[str]:
         prompts = [
             self._gen_intermediate_answer_prompt(f"Question: {query}\nDocument: {doc}")
             for query, doc in zip(queries, docs)
         ]
-        outputs = self.llm.generate(prompts, self.sampling_params)
-        answers = [output.outputs[0].text.strip() for output in outputs]
+
+        if self.provider == "vllm":
+            answers = self._process_prompts_vllm(prompts)
+        elif self.provider == "openai":
+            answers = asyncio.run(self._process_prompts_openai_async(prompts))
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}")
 
         return answers
 
@@ -89,8 +96,14 @@ class AnswerGenerator:
             self._gen_final_answer_prompt(question["question"], trace)
             for question, trace in zip(questions, traces)
         ]
-        outputs = self.llm.generate(prompts, self.sampling_params)
-        answers = [output.outputs[0].text.strip() for output in outputs]
+
+        if self.provider == "vllm":
+            answers = self._process_prompts_vllm(prompts)
+        elif self.provider == "openai":
+            answers = asyncio.run(self._process_prompts_openai_async(prompts))
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}")
+
         new_traces = [
             trace + "\nFinal answer: " + answer
             for trace, answer in zip(traces, answers)
@@ -107,21 +120,13 @@ class AnswerGenerator:
         return new_traces[0], answers[0]
 
 
-def test():
-    llm = LLM(
-        model="meta-llama/Llama-3.1-8B-Instruct",
-        tensor_parallel_size=1,
-        quantization=None,
-        dtype=torch.bfloat16,
-        gpu_memory_utilization=0.9,
-        trust_remote_code=True,
-    )
-
+def test(llm, provider):
     answer_generator = AnswerGenerator(
         llm=llm,
         max_gen_length=200,
         temperature=0.7,
         top_p=0.9,
+        provider=provider,
     )
 
     print("\n=== Testing Intermediate Answer Generation ===")
@@ -158,4 +163,28 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
+    # Test vLLM
+    import torch
+    from vllm import LLM
+
+    llm = LLM(
+        model="meta-llama/Llama-3.1-8B-Instruct",
+        tensor_parallel_size=1,
+        quantization=None,
+        dtype=torch.bfloat16,
+        gpu_memory_utilization=0.9,
+        trust_remote_code=True,
+    )
+
+    test(llm, "vllm")
+
+    # Test OpenAI
+    from modules import AsyncOpenAIConfig
+
+    llm = AsyncOpenAIConfig(
+        model_id="gpt-4o-mini-2024-07-18",
+        max_retries=1,
+        timeout=60,
+    )
+
+    test(llm, "openai")
