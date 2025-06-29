@@ -239,11 +239,17 @@ def parse_args():
     reranker_group.add_argument("--reranker-batch-size", type=int, default=8, help="Batch size for reranker")
     reranker_group.add_argument("--reranker-max-length", type=int, default=DEBERTA_MAX_LENGTH, help="Maximum length for reranker input")
 
-    answer_generator_group = parser.add_argument_group("Answer Generator Options")
-    answer_generator_group.add_argument("--ag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
-    answer_generator_group.add_argument("--ag-temperature", type=float, default=0.7, help="Temperature for answer generator")
-    answer_generator_group.add_argument("--ag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
-    answer_generator_group.add_argument("--ag-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for answer generator")
+    intermediate_answer_generator_group = parser.add_argument_group("Intermediate Answer Generator Options")
+    intermediate_answer_generator_group.add_argument("--iag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
+    intermediate_answer_generator_group.add_argument("--iag-temperature", type=float, default=0.7, help="Temperature for answer generator")
+    intermediate_answer_generator_group.add_argument("--iag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
+    intermediate_answer_generator_group.add_argument("--iag-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for answer generator")
+
+    final_answer_generator_group = parser.add_argument_group("Final Answer Generator Options")
+    final_answer_generator_group.add_argument("--fag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
+    final_answer_generator_group.add_argument("--fag-temperature", type=float, default=0.7, help="Temperature for answer generator")
+    final_answer_generator_group.add_argument("--fag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
+    final_answer_generator_group.add_argument("--fag-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for answer generator")
 
     stop_decider_group = parser.add_argument_group("Stop Decider Options")
     stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=200, help="Maximum generation length for stop decider")
@@ -317,19 +323,19 @@ def main(args: argparse.Namespace):
     )
 
     intermediate_answer_generator = AnswerGenerator(
-        llm=vllm_agent if args.ag_provider == "vllm" else openai_config,
-        max_gen_length=args.ag_max_gen_length,
-        temperature=args.ag_temperature,
-        top_p=args.ag_top_p,
-        provider=args.ag_provider,
+        llm=vllm_agent if args.iag_provider == "vllm" else openai_config,
+        max_gen_length=args.iag_max_gen_length,
+        temperature=args.iag_temperature,
+        top_p=args.iag_top_p,
+        provider=args.iag_provider,
     )
 
     final_answer_generator = AnswerGenerator(
-        llm=vllm_agent,
-        max_gen_length=args.ag_max_gen_length,
-        temperature=args.ag_temperature,
-        top_p=args.ag_top_p,
-        provider="vllm",
+        llm=vllm_agent if args.fag_provider == "vllm" else openai_config,
+        max_gen_length=args.fag_max_gen_length,
+        temperature=args.fag_temperature,
+        top_p=args.fag_top_p,
+        provider=args.fag_provider,
     )
 
     stop_decider = StopDecider(
