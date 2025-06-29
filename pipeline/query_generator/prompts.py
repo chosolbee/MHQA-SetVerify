@@ -210,3 +210,18 @@ When did hurricane sandy hit New York City?
 
 
 QUERY_GENERATION_USER_PROMPT = "Respond with a simple follow-up question that will help answer the main question, do not explain yourself or output anything else."
+
+
+def gen_retriever_query_prompt(question, trace):
+    chat = [
+        {
+            "role": "system",
+            "content": QUERY_GENERATION_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + QUERY_GENERATION_USER_PROMPT,
+        },
+    ]
+
+    return chat
