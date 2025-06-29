@@ -6,25 +6,7 @@ from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from pipeline.answer_generator.prompts import (
-    FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
-    FINAL_ANSWER_GENERATION_USER_PROMPT,
-)
-
-
-def gen_final_answer_prompt(question: str, trace: str) -> str:
-    chat = [
-        {
-            "role": "system",
-            "content": FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
-        },
-        {
-            "role": "user",
-            "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + FINAL_ANSWER_GENERATION_USER_PROMPT,
-        },
-    ]
-
-    return chat
+from pipeline.answer_generator.prompts import gen_final_answer_prompt
 
 
 def parse_args():
