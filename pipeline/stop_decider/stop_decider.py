@@ -17,7 +17,7 @@ class StopDecider:
 
         self.provider = provider
 
-        if self.provider == "vllm":
+        if self.provider == "vllm" and llm is not None:
             self.tokenizer = llm.get_tokenizer()
 
         print(f"Stop Decider - {self.provider} initialized successfully.")
@@ -95,6 +95,16 @@ class StopDecider:
             return "CONTINUE"
 
     def batch_decide(self, questions, traces):
+
+        if self.provider == "nostop":
+            decisions = []
+            for question in questions:
+                qid = question["id"]
+                decision = "CONTINUE"
+                print(f"| NOSTOP CONTINUE: {qid} - Always continue until max iterations")
+                decisions.append(decision)
+            return decisions
+
         prompts = [self._gen_stop_decision_prompt(question["question"], trace) for question, trace in zip(questions, traces)]
 
         if self.provider == "vllm":
@@ -110,6 +120,19 @@ class StopDecider:
             decisions.append(decision)
 
         return decisions
+
+    def batch_decide_with_history(self, questions, batch_history):
+        if self.provider == "nostop":
+            decisions = []
+            for question in questions:
+                qid = question["id"]
+                decision = "CONTINUE"
+                print(f"| NOSTOP CONTINUE: {qid} - Always continue until max iterations")
+                decisions.append(decision)
+            return decisions
+        else:
+            traces = [""] * len(questions)
+            return self.batch_decide(questions, traces)
 
 def test(llm, provider):
     stop_decider = StopDecider(
