@@ -29,16 +29,19 @@ if __name__ == "__main__":
         trace = data["trace"]
 
         partial_trace = ""
+        iter_cnt = 0
         for line in trace.split("\n"):
             partial_trace += line + "\n"
             if line.startswith("Intermediate answer: "):
                 cnt += 1
+                iter_cnt += 1
                 with open(args.output_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps({
                         "question_id": question_id,
                         "question": question,
                         "answers": answers,
-                        "trace": partial_trace.strip()
+                        "trace": partial_trace.strip(),
+                        "iter_cnt": iter_cnt,
                     }, ensure_ascii=False) + "\n")
 
     print(f"Dataset Size: {cnt}")

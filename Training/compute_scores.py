@@ -4,9 +4,32 @@ import json
 import argparse
 from tqdm import tqdm
 import torch
+import torch.distributed as dist
 from transformers import AutoTokenizer, AutoModelForCausalLM
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt
+
+
+def setup_distributed():
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ['LOCAL_RANK'])
+    else:
+        rank = 0
+        world_size = 1
+        local_rank = 0
+
+    if world_size > 1:
+        dist.init_process_group(backend='nccl')
+        torch.cuda.set_device(local_rank)
+
+    return rank, world_size, local_rank
+
+
+def cleanup_distributed():
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 def parse_args():
@@ -20,6 +43,8 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+
+    rank, world_size, local_rank = setup_distributed()
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
     if tokenizer.pad_token is None:
@@ -37,7 +62,11 @@ if __name__ == "__main__":
     with open(args.input_path, "r", encoding="utf-8") as f:
         traces = [json.loads(line.strip()) for line in f]
 
-    open(args.output_path, "w", encoding="utf-8").close()
+    if rank == 0:
+        open(args.output_path, "w", encoding="utf-8").close()
+
+    if world_size > 1:
+        dist.barrier()
 
     prompts = []
     completions = []
@@ -53,7 +82,6 @@ if __name__ == "__main__":
     print(f"Number of prompts: {len(prompts)}", flush=True)
     print(f"Number of completions: {len(completions)}", flush=True)
 
-    records = []
     batch_size = 8
     for i in tqdm(range(0, len(prompts), batch_size)):
         batch_prompts = prompts[i:i+batch_size]
@@ -71,9 +99,15 @@ if __name__ == "__main__":
         del outputs
         logits /= args.temperature
 
-        all_total_log_probs = []
-        all_probs = []
-        for j in range(min(batch_size, len(batch_prompts))):
+        total_items = len(logits)
+        items_per_process = total_items // world_size
+        start_idx = rank * items_per_process
+        if rank == world_size - 1:
+            end_idx = total_items
+        else:
+            end_idx = start_idx + items_per_process
+
+        for j in range(start_idx, end_idx):
             prompt_len = prompt_token_counts[j]
 
             completion_logits = logits[j, prompt_len-1:-1, :]
@@ -100,3 +134,5 @@ if __name__ == "__main__":
 
         del logits
         torch.cuda.empty_cache()
+
+    cleanup_distributed()
