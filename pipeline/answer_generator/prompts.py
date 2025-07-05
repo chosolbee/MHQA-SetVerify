@@ -335,3 +335,35 @@ October 28, 2012
 
 
 FINAL_ANSWER_GENERATION_USER_PROMPT = "Now, please provide the final answer to the main question. Respond with an appropriate answer only, do not explain yourself or output anything else."
+
+
+def gen_intermediate_answer_prompt(trace: str) -> str:
+    """Generate prompt for intermediate answer generation"""
+    chat = [
+        {
+            "role": "system",
+            "content": INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": trace.strip(),
+        },
+    ]
+
+    return chat
+
+
+def gen_final_answer_prompt(question: str, trace: str) -> str:
+    """Generate prompt for final answer generation"""
+    chat = [
+        {
+            "role": "system",
+            "content": FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + FINAL_ANSWER_GENERATION_USER_PROMPT,
+        },
+    ]
+
+    return chat

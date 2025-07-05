@@ -1,7 +1,7 @@
 import os
 import sys
 import asyncio
-from .prompts import QUERY_GENERATION_SYSTEM_PROMPT, QUERY_GENERATION_USER_PROMPT
+from .prompts import gen_retriever_query_prompt
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from modules import AsyncOpenAIProcessor
 
@@ -19,20 +19,6 @@ class QueryGenerator:
         self.provider = provider
 
         print(f"Query Generator - {self.provider} loaded successfully.")
-
-    def _gen_retriever_query_prompt(self, question, trace):
-        chat = [
-            {
-                "role": "system",
-                "content": QUERY_GENERATION_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + QUERY_GENERATION_USER_PROMPT,
-            },
-        ]
-
-        return chat
 
     def _process_prompts_vllm(self, prompts):
         from vllm import SamplingParams
@@ -63,7 +49,7 @@ class QueryGenerator:
 
     def batch_generate(self, questions: list[str], traces: list[str]) -> tuple[list[str], list[str]]:
         prompts = [
-            self._gen_retriever_query_prompt(question["question"], trace)
+            gen_retriever_query_prompt(question["question"], trace)
             for question, trace in zip(questions, traces)
         ]
 
