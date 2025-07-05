@@ -34,20 +34,34 @@ def analyze_and_split_data(file_path, train_ratio=0.8, eval_ratio=0.1, test_rati
         random_state=random_state
     )
     
+    temp_question_avg_prob = question_avg_prob[question_avg_prob['question_id'].isin(temp_questions)]
     eval_ratio_adjusted = eval_ratio / (eval_ratio + test_ratio)
-    eval_questions, test_questions = train_test_split(
-        temp_questions,
-        test_size=(1 - eval_ratio_adjusted),
-        random_state=random_state
-    )
+    
+    try:
+        eval_questions, test_questions = train_test_split(
+            temp_question_avg_prob['question_id'],
+            test_size=(1 - eval_ratio_adjusted),
+            stratify=pd.cut(temp_question_avg_prob['avg_prob'], bins=3, labels=False),
+            random_state=random_state
+        )
+    except ValueError:
+        eval_questions, test_questions = train_test_split(
+            temp_question_avg_prob['question_id'],
+            test_size=(1 - eval_ratio_adjusted),
+            random_state=random_state
+        )
     
     train_df = df[df['question_id'].isin(train_questions)]
     eval_df = df[df['question_id'].isin(eval_questions)]
     test_df = df[df['question_id'].isin(test_questions)]
     
-    print(f"Train set: {len(train_df)} samples ({len(train_df)/len(df)*100:.1f}%)")
-    print(f"Eval set: {len(eval_df)} samples ({len(eval_df)/len(df)*100:.1f}%)")
-    print(f"Test set: {len(test_df)} samples ({len(test_df)/len(df)*100:.1f}%)")
+    train_avg_prob = train_df['prob'].mean()
+    eval_avg_prob = eval_df['prob'].mean()
+    test_avg_prob = test_df['prob'].mean()
+    
+    print(f"Train set: {len(train_df)} samples ({len(train_df)/len(df)*100:.1f}%) - avg prob: {train_avg_prob:.6f}")
+    print(f"Eval set: {len(eval_df)} samples ({len(eval_df)/len(df)*100:.1f}%) - avg prob: {eval_avg_prob:.6f}")
+    print(f"Test set: {len(test_df)} samples ({len(test_df)/len(df)*100:.1f}%) - avg prob: {test_avg_prob:.6f}")
     
     output_files = save_splits(train_df, eval_df, test_df, file_path, output_dir)
     
