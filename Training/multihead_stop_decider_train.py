@@ -110,8 +110,8 @@ class MultiheadClassifier(PreTrainedModel):
 
         pooled_output = self.dropout(pooled_output)
 
-        preds_head1 = self.classifier_head1(pooled_output).sigmoid()
-        preds_head2 = self.classifier_head2(pooled_output).sigmoid()
+        preds_head1 = self.classifier_head1(pooled_output)
+        preds_head2 = self.classifier_head2(pooled_output)
 
         return {
             "preds_head1": preds_head1,

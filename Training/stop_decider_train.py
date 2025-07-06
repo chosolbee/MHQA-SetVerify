@@ -41,7 +41,8 @@ class StopDecisionDataset(Dataset):
     def __getitem__(self, idx):
         trace = self.data[idx]
         chat = gen_final_answer_prompt(trace["question"], trace["trace"])
-        label = trace["prob"]
+        label1 = trace["prob"]
+        label2 = trace["max_cont_prob"]
 
         encoding = self.tokenizer.apply_chat_template(
             chat,
@@ -54,43 +55,66 @@ class StopDecisionDataset(Dataset):
         )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
-        encoding["labels"] = torch.tensor(label, dtype=torch.float)
+        encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
 
         return encoding
 
 
-def compute_loss_func(outputs, labels, num_items_in_batch=None):
-    logits = outputs.logits.squeeze(-1)
-    loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
-    loss = loss_fn(logits, labels)
-    if num_items_in_batch is not None:
-        loss = loss / num_items_in_batch
-    else:
-        loss = loss / labels.numel()
+def compute_loss_func(target_type="abs"):
+    def func(outputs, labels, num_items_in_batch=None):
+        logits = outputs.logits.squeeze(-1)
+        if target_type == "abs":
+            targets = labels[:, 0]
+        elif target_type == "soft_diff":
+            targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
+        elif target_type == "hard_diff":
+            targets = (labels[:, 0] > labels[:, 1]).float()
+        else:
+            raise ValueError(f"Unknown target type: {target_type}")
 
-    return loss
+        loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
+        loss = loss_fn(logits, targets)
+        if num_items_in_batch is not None:
+            loss = loss / num_items_in_batch
+        else:
+            loss = loss / labels.numel()
+
+        return loss
+
+    return func
 
 
-def compute_metrics(eval_pred, threshold):
-    def sigmoid(x):
-        return 1 / (1 + np.exp(-x))
+def compute_metrics(threshold=0.8, target_type="abs"):
+    def func(eval_pred):
+        def sigmoid(x):
+            return 1 / (1 + np.exp(-x))
 
-    logits, labels = eval_pred
-    preds = sigmoid(logits.squeeze(-1))
+        logits, labels = eval_pred
+        preds = sigmoid(logits.squeeze(-1))
+        if target_type == "abs":
+            targets = labels[:, 0]
+        elif target_type == "soft_diff":
+            targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
+        elif target_type == "hard_diff":
+            targets = (labels[:, 0] > labels[:, 1]).float()
+        else:
+            raise ValueError(f"Unknown target type: {target_type}")
 
-    y_pred = (preds > threshold).astype(int)
-    y_true = (labels > threshold).astype(int)
-    accuracy = accuracy_score(y_true, y_pred)
-    precision = precision_score(y_true, y_pred, zero_division=1)
-    recall = recall_score(y_true, y_pred, zero_division=1)
-    f1 = f1_score(y_true, y_pred, zero_division=1)
+        y_pred = (preds > threshold).astype(int)
+        y_true = (targets > threshold).astype(int)
+        accuracy = accuracy_score(y_true, y_pred)
+        precision = precision_score(y_true, y_pred, zero_division=1)
+        recall = recall_score(y_true, y_pred, zero_division=1)
+        f1 = f1_score(y_true, y_pred, zero_division=1)
 
-    return {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-    }
+        return {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+        }
+    
+    return func
 
 
 def parse_args():
@@ -123,6 +147,7 @@ def parse_args():
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
     parser.add_argument("--threshold", type=float, default=0.8, help="Threshold for stop decision")
+    parser.add_argument("--target-type", type=str, default="abs", choices=["abs", "soft_diff", "hard_diff"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
@@ -226,8 +251,8 @@ def main(args):
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        compute_loss_func=compute_loss_func,
-        compute_metrics=lambda eval_pred: compute_metrics(eval_pred, args.threshold),
+        compute_loss_func=compute_loss_func(args.target_type),
+        compute_metrics=compute_metrics(args.threshold, args.target_type),
         processing_class=tokenizer,
     )
 
