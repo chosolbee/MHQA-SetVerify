@@ -20,7 +20,7 @@ from transformers import (
     Trainer,
     set_seed,
 )
-from peft import LoraConfig, TaskType, PeftModel
+from peft import LoraConfig, TaskType, PeftModelForSequenceClassification, prepare_model_for_kbit_training
 import wandb
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from config import WANDB_ENTITY
@@ -61,15 +61,22 @@ class StopDecisionDataset(Dataset):
 
 def compute_loss_func(outputs, labels, num_items_in_batch=None):
     logits = outputs.logits.squeeze(-1)
-    loss_fn = nn.BCEWithLogitsLoss(reduction="mean")
+    loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
     loss = loss_fn(logits, labels)
+    if num_items_in_batch is not None:
+        loss = loss / num_items_in_batch
+    else:
+        loss = loss / labels.numel()
 
     return loss
 
 
 def compute_metrics(eval_pred, threshold):
+    def sigmoid(x):
+        return 1 / (1 + np.exp(-x))
+
     logits, labels = eval_pred
-    preds = 1 / (1 + np.exp(-(logits.squeeze(-1))))
+    preds = sigmoid(logits.squeeze(-1))
 
     y_pred = (preds > threshold).astype(int)
     y_true = (labels > threshold).astype(int)
@@ -171,16 +178,10 @@ def main(args):
         r=args.lora_r,
         bias=args.lora_bias,
         target_modules="all-linear",
-        modules_to_save=["score"],
     )
 
-    model = PeftModel(model, lora_config)
-    if args.gradient_checkpointing:
-        model.enable_input_require_grads()
-    if args.fp16:
-        for param in model.parameters():
-            if param.requires_grad:
-                param.data = param.data.float()
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=args.gradient_checkpointing)
+    model = PeftModelForSequenceClassification(model, lora_config)
     model.print_trainable_parameters()
 
     print("LoRA configuration applied successfully.", flush=True)
