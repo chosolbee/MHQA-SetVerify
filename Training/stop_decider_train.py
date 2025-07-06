@@ -2,6 +2,13 @@ import os
 import sys
 import json
 import argparse
+import numpy as np
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score
+)
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -60,6 +67,25 @@ def compute_loss_func(outputs, labels, num_items_in_batch=None):
     return loss
 
 
+def compute_metrics(eval_pred, threshold):
+    logits, labels = eval_pred
+    preds = 1 / (1 + np.exp(-(logits.squeeze(-1))))
+
+    y_pred = (preds > threshold).astype(int)
+    y_true = (labels > threshold).astype(int)
+    accuracy = accuracy_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred, zero_division=1)
+    recall = recall_score(y_true, y_pred, zero_division=1)
+    f1 = f1_score(y_true, y_pred, zero_division=1)
+
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Stop Decider Training Options")
 
@@ -87,8 +113,11 @@ def parse_args():
     parser.add_argument("--save-steps", type=int, default=500, help="Save Steps")
     parser.add_argument("--save-total-limit", type=int, default=3, help="Total Number of Saved Checkpoints")
     parser.add_argument("--logging-steps", type=int, default=100, help="Logging Steps")
+    parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
+    parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
+    parser.add_argument("--threshold", type=float, default=0.8, help="Threshold for stop decision")
+    parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
-    parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="Path to DeepSpeed Configuration File")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
 
     args = parser.parse_args()
@@ -102,7 +131,7 @@ def main(args):
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
 
-    if local_rank == 0:
+    if local_rank == 0 and not args.disable_wandb:
         wandb.init(
             project="stop-decider-train",
             entity=WANDB_ENTITY,
@@ -175,10 +204,12 @@ def main(args):
         save_total_limit=args.save_total_limit,
         logging_steps=args.logging_steps,
         load_best_model_at_end=True,
-        report_to=["wandb"],
-        run_name=args.run_name,
+        label_names=["labels"],
+        metric_for_best_model="eval_loss",
         deepspeed=args.deepspeed_config,
-        ddp_find_unused_parameters=False,
+        ddp_find_unused_parameters=args.ddp_find_unused_parameters,
+        report_to=None if args.disable_wandb else ["wandb"],
+        run_name=args.run_name,
         seed=args.seed,
         data_seed=args.seed,
     )
@@ -195,6 +226,7 @@ def main(args):
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         compute_loss_func=compute_loss_func,
+        compute_metrics=lambda eval_pred: compute_metrics(eval_pred, args.threshold),
         processing_class=tokenizer,
     )
 
