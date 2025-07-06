@@ -34,6 +34,7 @@ class StopDecisionDataset(Dataset):
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
+            self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
 
     def __len__(self):
         return len(self.data)
@@ -96,7 +97,7 @@ def compute_metrics(threshold=0.8, target_type="abs"):
         elif target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
         elif target_type == "hard_diff":
-            targets = (labels[:, 0] > labels[:, 1]).float()
+            targets = (labels[:, 0] > labels[:, 1]).astype(float)
         else:
             raise ValueError(f"Unknown target type: {target_type}")
 
