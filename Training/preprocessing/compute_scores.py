@@ -6,7 +6,7 @@ from tqdm import tqdm
 import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer, AutoModelForCausalLM
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt
 
 
