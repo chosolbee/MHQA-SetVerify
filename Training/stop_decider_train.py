@@ -68,6 +68,7 @@ def compute_loss_func(target_type="abs"):
             targets = labels[:, 0]
         elif target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
+            targets = torch.nan_to_num(targets, nan=0.0)
         elif target_type == "hard_diff":
             targets = (labels[:, 0] > labels[:, 1]).float()
         else:
