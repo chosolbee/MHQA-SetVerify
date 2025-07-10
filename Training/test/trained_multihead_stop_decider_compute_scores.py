@@ -6,11 +6,10 @@ from tqdm import tqdm
 import torch
 from transformers import (
     AutoTokenizer,
-    AutoModelForSequenceClassification,
     BitsAndBytesConfig,
     set_seed,
 )
-from peft import PeftModelForSequenceClassification
+from ..multihead_stop_decider_train import MultiheadClassifier
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt
 
@@ -22,7 +21,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for processing")
     parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="Model ID for computing scores")
     parser.add_argument("--fp16", action="store_true", help="Use fp16 precision for model")
-    parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the trained LoRA adapter")
+    parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the checkpoint of the multihead classifier")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 
     return parser.parse_args()
@@ -40,23 +39,17 @@ if __name__ == "__main__":
         bnb_4bit_compute_dtype=torch.float16 if args.fp16 else torch.float32,
     )
 
-    model = AutoModelForSequenceClassification.from_pretrained(
-        args.model_id,
+    model = MultiheadClassifier.from_pretrained(
+        args.checkpoint_path,
         quantization_config=nf4_config,
         use_cache=False,
+        low_cpu_mem_usage=True,
         device_map="auto",
-        num_labels=1,
-    )
-
-    model = PeftModelForSequenceClassification.from_pretrained(
-        model,
-        args.checkpoint_path,
-        device_map="auto"
     )
 
     model.eval()
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
+    tokenizer = AutoTokenizer.from_pretrained(args.checkpoint_path)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
@@ -83,12 +76,14 @@ if __name__ == "__main__":
         ).to(model.device)
 
         with torch.no_grad():
-            logits = model(**inputs).logits.squeeze(-1)
-            batch_scores = torch.sigmoid(logits).cpu().tolist()
+            outputs = model(**inputs)
+            batch_scores1 = outputs["preds_head1"].squeeze(-1).cpu().tolist()
+            batch_scores2 = outputs["preds_head2"].squeeze(-1).cpu().tolist()
 
         with open(args.output_path, "a", encoding="utf-8") as f:
-            for trace, score in zip(batch_traces, batch_scores):
-                trace["score"] = score
+            for trace, score1, score2 in zip(batch_traces, batch_scores1, batch_scores2):
+                trace["score1"] = score1
+                trace["score2"] = score2
                 f.write(json.dumps(trace) + "\n")
 
     print(f"Scoring completed and results saved to {args.output_path}", flush=True)
