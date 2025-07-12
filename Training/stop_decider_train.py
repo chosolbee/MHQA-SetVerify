@@ -35,6 +35,7 @@ class StopDecisionDataset(Dataset):
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
             self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
+            np.random.shuffle(self.data)
 
     def __len__(self):
         return len(self.data)
@@ -116,7 +117,7 @@ def compute_metrics(threshold=0.8, target_type="abs"):
             "recall": recall,
             "f1": f1,
         }
-    
+
     return func
 
 
@@ -141,7 +142,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=2, help="Batch Size")
     parser.add_argument("--gradient-accumulation-steps", type=int, default=32, help="Gradient Accumulation Steps")
     parser.add_argument("--gradient-checkpointing", action="store_true", help="Use Gradient Checkpointing")
-    parser.add_argument("--fp16", action="store_true", help="Use FP16")
+    parser.add_argument("--bf16", action="store_true", help="Use BF16")
     parser.add_argument("--num-epochs", type=int, default=3, help="Number of Epochs")
     parser.add_argument("--eval-steps", type=int, default=500, help="Evaluation Steps")
     parser.add_argument("--save-steps", type=int, default=500, help="Save Steps")
@@ -180,7 +181,7 @@ def main(args):
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.float16
+        bnb_4bit_compute_dtype=torch.bfloat16 if args.bf16 else torch.float32,
     )
 
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -225,7 +226,7 @@ def main(args):
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         gradient_checkpointing=args.gradient_checkpointing,
-        fp16=args.fp16,
+        bf16=args.bf16,
         num_train_epochs=args.num_epochs,
         eval_strategy="steps",
         eval_steps=args.eval_steps,

@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument("--output-path", type=str, required=True, help="Path to the output JSONL file")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for processing")
     parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="Model ID for computing scores")
-    parser.add_argument("--fp16", action="store_true", help="Use fp16 precision for model")
+    parser.add_argument("--bf16", action="store_true", help="Use bf16 precision for model")
     parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the checkpoint of the multihead classifier")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 
@@ -34,7 +34,7 @@ if __name__ == "__main__":
             "device_map": "auto",
             "use_cache": False,
         },
-        dtype=torch.float16 if args.fp16 else torch.float32,
+        dtype=torch.bfloat16 if args.bf16 else torch.float32,
         inference_mode=True,
     )
 

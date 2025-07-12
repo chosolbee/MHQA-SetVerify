@@ -16,8 +16,6 @@ if __name__ == "__main__":
 
     df = pd.read_json(args.input_path, lines=True)
 
-    df['hard_diff'] = (df['prob'] > df['max_cont_prob']).astype(int)
-
     result = df.groupby('question_id').agg({
         'em': 'max',
         'f1': 'max'
