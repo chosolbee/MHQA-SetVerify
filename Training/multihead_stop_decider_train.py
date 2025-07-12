@@ -370,7 +370,6 @@ def main(args):
         gradient_checkpointing=args.gradient_checkpointing,
         bf16=args.bf16,
         num_train_epochs=args.num_epochs,
-        max_steps=1,
         eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
