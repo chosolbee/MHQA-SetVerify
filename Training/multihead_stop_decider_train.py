@@ -8,19 +8,21 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
 from transformers import (
     AutoTokenizer,
     AutoModel,
-    AutoConfig,
     PreTrainedModel,
+    PretrainedConfig,
     BitsAndBytesConfig,
     TrainingArguments,
     Trainer,
     set_seed,
 )
+from safetensors.torch import load_file
 from peft import LoraConfig, TaskType, PeftModel, prepare_model_for_kbit_training
 import wandb
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -62,22 +64,92 @@ class MultiheadStopDecisionDataset(Dataset):
         return encoding
 
 
-class MultiheadClassifier(PreTrainedModel):
-    def __init__(self, config, *model_args, **model_kwargs):
+class MultiheadConfig(PretrainedConfig):
+    model_type = "multihead"
+
+    def __init__(
+        self,
+        encoder_name_or_path: str = None,
+        encoder_quantization_config: dict = None,
+        encoder_lora_config: dict = None,
+        use_gradient_checkpointing: bool = False,
+        **kwargs,
+    ):
+        self.encoder_name_or_path = encoder_name_or_path
+        self.encoder_quantization_config = encoder_quantization_config
+        self.encoder_lora_config = encoder_lora_config
+        self.use_gradient_checkpointing = use_gradient_checkpointing
+        super().__init__(**kwargs)
+
+
+class MultiheadModel(PreTrainedModel):
+    config_class = MultiheadConfig
+    base_model_prefix = "multihead"
+
+    def __init__(self, config, encoder_kwargs={}, dtype=None, inference_mode=False):
         super().__init__(config)
 
-        self.encoder = AutoModel.from_pretrained(config.name_or_path, *model_args, **model_kwargs)
+        encoder_quantization_config = None
+        if hasattr(config, "encoder_quantization_config"):
+            encoder_quantization_config = BitsAndBytesConfig(**config.encoder_quantization_config)
+
+        self.encoder = AutoModel.from_pretrained(
+            config.encoder_name_or_path,
+            quantization_config=encoder_quantization_config,
+            torch_dtype=dtype,
+            **encoder_kwargs,
+        )
+
+        if (encoder_quantization_config.load_in_4bit or encoder_quantization_config.load_in_8bit) and not inference_mode:
+            self.encoder = prepare_model_for_kbit_training(self.encoder, use_gradient_checkpointing=config.use_gradient_checkpointing)
+
+        if hasattr(config, "encoder_lora_config"):
+            encoder_lora_config = LoraConfig(inference_mode=inference_mode, **config.encoder_lora_config)
+            self.encoder = PeftModel(self.encoder, encoder_lora_config)
+
         self.dropout = nn.Dropout(0.1)
-        self.classifier_head1 = nn.Linear(config.hidden_size, 1)
-        self.classifier_head2 = nn.Linear(config.hidden_size, 1)
+        self.classifier_head1 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
+        self.classifier_head2 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
 
         self.post_init()
 
-    def apply_lora_to_encoder(self, lora_config, use_gradient_checkpointing=False):
-        self.encoder = prepare_model_for_kbit_training(self.encoder, use_gradient_checkpointing=use_gradient_checkpointing)
-        self.encoder = PeftModel(self.encoder, lora_config)
+    @classmethod
+    def from_pretrained(cls, pretrained_model_path, *model_args, **kwargs):
+        config = kwargs.pop("config", None)
+        if config is None:
+            config = MultiheadConfig.from_pretrained(pretrained_model_path)
 
-        return self
+        model = cls(config, *model_args, **kwargs)
+
+        state_dict_path = os.path.join(pretrained_model_path, "model.safetensors")  # assuming only one shard
+        load_device = model.device.index if model.device.index is not None else "cpu"
+        state_dict = load_file(state_dict_path, device=load_device)
+
+        missing, _ = model.load_state_dict(state_dict, strict=False, assign=True)
+        if missing:
+            raise RuntimeError(f"Missing key(s) in state_dict: {missing}")
+
+        return model
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        if strict:
+            state_dict_encoder = {k.split(".", 1)[-1]: v for k, v in state_dict.items() if k.startswith("encoder.") and k.endswith(".weight")}
+            self.encoder.load_state_dict(state_dict_encoder, strict=strict, assign=assign)
+            state_dict_classifier_head1 = {k.split(".", 1)[-1]: v for k, v in state_dict.items() if k.startswith("classifier_head1.")}
+            self.classifier_head1.load_state_dict(state_dict_classifier_head1, strict=strict, assign=assign)
+            state_dict_classifier_head2 = {k.split(".", 1)[-1]: v for k, v in state_dict.items() if k.startswith("classifier_head2.")}
+            self.classifier_head2.load_state_dict(state_dict_classifier_head2, strict=strict, assign=assign)
+
+            return [], []
+        else:
+            state_dict = {k.split(".", 1)[-1]: v for k, v in state_dict.items()}
+            missing_encoder, unexpected_encoder = self.encoder.load_state_dict(state_dict, strict=strict, assign=assign)
+            missing_classifier_head1, unexpected_classifier_head1 = self.classifier_head1.load_state_dict(state_dict, strict=strict, assign=assign)
+            missing_classifier_head2, unexpected_classifier_head2 = self.classifier_head2.load_state_dict(state_dict, strict=strict, assign=assign)
+
+            return missing_encoder + missing_classifier_head1 + missing_classifier_head2, \
+                   unexpected_encoder + unexpected_classifier_head1 + unexpected_classifier_head2
+
 
     def print_trainable_parameters(self):
         trainable_params = 0
@@ -118,6 +190,13 @@ class MultiheadClassifier(PreTrainedModel):
             "preds_head1": preds_head1,
             "preds_head2": preds_head2,
         }
+
+    def to(self, *args, **kwargs):
+        self.encoder.to(*args, **kwargs)
+        self.dropout.to(*args, **kwargs)
+        self.classifier_head1.to(*args, **kwargs)
+        self.classifier_head2.to(*args, **kwargs)
+        return self
 
 
 class MultiheadTrainer(Trainer):
@@ -238,21 +317,32 @@ def main(args):
     else:
         os.environ["WANDB_MODE"] = "disabled"
 
-    nf4_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.float16
+    config = MultiheadConfig(
+        encoder_name_or_path=args.model_id,
+        encoder_quantization_config={
+            "load_in_4bit": True,
+            "bnb_4bit_quant_type": "nf4",
+            "bnb_4bit_use_double_quant": True,
+            "bnb_4bit_compute_dtype": "float16" if args.fp16 else "float32",
+        },
+        encoder_lora_config={
+            "task_type": TaskType.SEQ_CLS,
+            "lora_alpha": args.lora_alpha,
+            "lora_dropout": args.lora_dropout,
+            "r": args.lora_r,
+            "bias": args.lora_bias,
+            "target_modules": "all-linear",
+        },
+        use_gradient_checkpointing=args.gradient_checkpointing,
     )
 
-    config = AutoConfig.from_pretrained(args.model_id)
-
-    model = MultiheadClassifier(
+    model = MultiheadModel(
         config,
-        quantization_config=nf4_config,
-        use_cache=False,
-        low_cpu_mem_usage=True,
-        device_map={"": local_rank},
+        encoder_kwargs={
+            "device_map": {"": local_rank},
+            "use_cache": False,
+        },
+        inference_mode=False,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
@@ -262,17 +352,6 @@ def main(args):
 
     print("Model and tokenizer loaded successfully.", flush=True)
 
-    lora_config = LoraConfig(
-        task_type=TaskType.SEQ_CLS,
-        inference_mode=False,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        r=args.lora_r,
-        bias=args.lora_bias,
-        target_modules="all-linear",
-    )
-
-    model.apply_lora_to_encoder(lora_config, args.gradient_checkpointing)
     model.print_trainable_parameters()
 
     print("LoRA configuration applied successfully.", flush=True)
@@ -290,6 +369,7 @@ def main(args):
         gradient_checkpointing=args.gradient_checkpointing,
         fp16=args.fp16,
         num_train_epochs=args.num_epochs,
+        max_steps=1,
         eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,

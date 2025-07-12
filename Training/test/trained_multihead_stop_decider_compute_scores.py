@@ -4,12 +4,8 @@ import json
 import argparse
 from tqdm import tqdm
 import torch
-from transformers import (
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    set_seed,
-)
-from ..multihead_stop_decider_train import MultiheadClassifier
+from transformers import AutoTokenizer, set_seed
+from ..multihead_stop_decider_train import MultiheadModel
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt
 
@@ -32,19 +28,14 @@ if __name__ == "__main__":
 
     set_seed(args.seed)
 
-    nf4_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.float16 if args.fp16 else torch.float32,
-    )
-
-    model = MultiheadClassifier.from_pretrained(
+    model = MultiheadModel.from_pretrained(
         args.checkpoint_path,
-        quantization_config=nf4_config,
-        use_cache=False,
-        low_cpu_mem_usage=True,
-        device_map="auto",
+        encoder_kwargs={
+            "device_map": "auto",
+            "use_cache": False,
+        },
+        dtype=torch.float16 if args.fp16 else torch.float32,
+        inference_mode=True,
     )
 
     model.eval()
