@@ -133,24 +133,35 @@ class MultiheadModel(PreTrainedModel):
         return model
 
     def load_state_dict(self, state_dict, strict=True, assign=False):
-        if strict:
-            state_dict_encoder = {k.split(".", 1)[-1]: v for k, v in state_dict.items() if k.startswith("encoder.") and k.endswith(".weight")}
-            self.encoder.load_state_dict(state_dict_encoder, strict=strict, assign=assign)
-            state_dict_classifier_head1 = {k.split(".", 1)[-1]: v for k, v in state_dict.items() if k.startswith("classifier_head1.")}
-            self.classifier_head1.load_state_dict(state_dict_classifier_head1, strict=strict, assign=assign)
-            state_dict_classifier_head2 = {k.split(".", 1)[-1]: v for k, v in state_dict.items() if k.startswith("classifier_head2.")}
-            self.classifier_head2.load_state_dict(state_dict_classifier_head2, strict=strict, assign=assign)
+        state_dict_encoder = {
+            k.split(".", 1)[-1]: v
+            for k, v in state_dict.items()
+            if k.startswith("encoder.") and k.endswith(".weight")
+        }
+        missing_encoder, unexpected_encoder = self.encoder.load_state_dict(
+            state_dict_encoder, strict=strict, assign=assign
+        )
 
-            return [], []
-        else:
-            state_dict = {k.split(".", 1)[-1]: v for k, v in state_dict.items()}
-            missing_encoder, unexpected_encoder = self.encoder.load_state_dict(state_dict, strict=strict, assign=assign)
-            missing_classifier_head1, unexpected_classifier_head1 = self.classifier_head1.load_state_dict(state_dict, strict=strict, assign=assign)
-            missing_classifier_head2, unexpected_classifier_head2 = self.classifier_head2.load_state_dict(state_dict, strict=strict, assign=assign)
+        state_dict_classifier_head1 = {
+            k.split(".", 1)[-1]: v
+            for k, v in state_dict.items()
+            if k.startswith("classifier_head1.")
+        }
+        missing_classifier_head1, unexpected_classifier_head1 = self.classifier_head1.load_state_dict(
+            state_dict_classifier_head1, strict=strict, assign=assign
+        )
 
-            return missing_encoder + missing_classifier_head1 + missing_classifier_head2, \
-                   unexpected_encoder + unexpected_classifier_head1 + unexpected_classifier_head2
+        state_dict_classifier_head2 = {
+            k.split(".", 1)[-1]: v
+            for k, v in state_dict.items()
+            if k.startswith("classifier_head2.")
+        }
+        missing_classifier_head2, unexpected_classifier_head2 = self.classifier_head2.load_state_dict(
+            state_dict_classifier_head2, strict=strict, assign=assign
+        )
 
+        return missing_encoder + missing_classifier_head1 + missing_classifier_head2, \
+               unexpected_encoder + unexpected_classifier_head1 + unexpected_classifier_head2
 
     def print_trainable_parameters(self):
         trainable_params = 0
@@ -263,6 +274,7 @@ def compute_metrics(eval_pred):
         "recall": recall,
         "f1": f1,
     }
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Stop Decider Training Options")
