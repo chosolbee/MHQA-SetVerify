@@ -2,11 +2,7 @@ import os
 import sys
 from typing import List, Dict, Any, Tuple
 import asyncio
-from .prompts import (
-    INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT,
-    FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
-    FINAL_ANSWER_GENERATION_USER_PROMPT,
-)
+from .prompts import gen_intermediate_answer_prompt, gen_final_answer_prompt
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from modules import AsyncOpenAIProcessor
 
@@ -24,36 +20,6 @@ class AnswerGenerator:
         self.provider = provider
 
         print(f"Answer Generator - {self.provider} initialized successfully.")
-
-    def _gen_intermediate_answer_prompt(self, trace: str) -> str:
-        """Generate prompt for intermediate answer generation"""
-        chat = [
-            {
-                "role": "system",
-                "content": INTERMEDIATE_ANSWER_GENERATION_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": trace.strip(),
-            },
-        ]
-
-        return chat
-
-    def _gen_final_answer_prompt(self, question: str, trace: str) -> str:
-        """Generate prompt for final answer generation"""
-        chat = [
-            {
-                "role": "system",
-                "content": FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + FINAL_ANSWER_GENERATION_USER_PROMPT,
-            },
-        ]
-
-        return chat
 
     def _process_prompts_vllm(self, prompts):
         from vllm import SamplingParams
@@ -78,7 +44,7 @@ class AnswerGenerator:
 
     def batch_generate_intermediate_answers(self, queries: List[str], docs: List[str]) -> List[str]:
         prompts = [
-            self._gen_intermediate_answer_prompt(f"Question: {query}\nDocument: {doc}")
+            gen_intermediate_answer_prompt(f"Question: {query}\nDocument: {doc}")
             for query, doc in zip(queries, docs)
         ]
 
@@ -93,7 +59,7 @@ class AnswerGenerator:
 
     def batch_generate_final_answers(self, questions: List[str], traces: List[str]) -> List[str]:
         prompts = [
-            self._gen_final_answer_prompt(question["question"], trace)
+            gen_final_answer_prompt(question["question"], trace)
             for question, trace in zip(questions, traces)
         ]
 
