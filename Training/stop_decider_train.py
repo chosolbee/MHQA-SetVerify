@@ -39,9 +39,10 @@ class StopDecisionDataset(Dataset):
             np.random.shuffle(self.data)
 
         pos_samples = [trace for trace in self.data if trace[target_label] > trace[f"max_cont_{target_label}"]]
+        neu_samples = [trace for trace in self.data if trace[target_label] == trace[f"max_cont_{target_label}"]]
         neg_samples = [trace for trace in self.data if trace[target_label] < trace[f"max_cont_{target_label}"]]
-        min_len = min(len(pos_samples), len(neg_samples))
-        self.data = pos_samples[:min_len] + neg_samples[:min_len]
+        min_len = min(len(pos_samples), len(neg_samples), len(neu_samples))
+        self.data = pos_samples[:min_len] + neg_samples[:min_len] + neu_samples[:min_len]
         np.random.shuffle(self.data)
 
     def __len__(self):
