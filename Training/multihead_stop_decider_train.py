@@ -31,14 +31,21 @@ from pipeline.answer_generator.prompts import gen_final_answer_prompt
 
 
 class MultiheadStopDecisionDataset(Dataset):
-    def __init__(self, filepath, tokenizer, max_length=4096):
+    def __init__(self, filepath, tokenizer, max_length=4096, target_label="prob"):
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.target_label = target_label
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
             self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
             np.random.shuffle(self.data)
+
+        pos_samples = [trace for trace in self.data if trace[target_label] > trace[f"max_cont_{target_label}"]]
+        neg_samples = [trace for trace in self.data if trace[target_label] < trace[f"max_cont_{target_label}"]]
+        min_len = min(len(pos_samples), len(neg_samples))
+        self.data = pos_samples[:min_len] + neg_samples[:min_len]
+        np.random.shuffle(self.data)
 
     def __len__(self):
         return len(self.data)
@@ -46,8 +53,8 @@ class MultiheadStopDecisionDataset(Dataset):
     def __getitem__(self, idx):
         trace = self.data[idx]
         chat = gen_final_answer_prompt(trace["question"], trace["trace"])
-        label1 = trace["prob"]
-        label2 = trace["max_cont_prob"]
+        label1 = trace[self.target_label]
+        label2 = trace[f"max_cont_{self.target_label}"]
 
         encoding = self.tokenizer.apply_chat_template(
             chat,
@@ -73,12 +80,14 @@ class MultiheadConfig(PretrainedConfig):
         encoder_name_or_path: str = None,
         encoder_quantization_config: dict = None,
         encoder_lora_config: dict = None,
+        dropout_prob: float = 0.1,
         use_gradient_checkpointing: bool = False,
         **kwargs,
     ):
         self.encoder_name_or_path = encoder_name_or_path
         self.encoder_quantization_config = encoder_quantization_config
         self.encoder_lora_config = encoder_lora_config
+        self.dropout_prob = dropout_prob
         self.use_gradient_checkpointing = use_gradient_checkpointing
         super().__init__(**kwargs)
 
@@ -108,7 +117,7 @@ class MultiheadModel(PreTrainedModel):
             encoder_lora_config = LoraConfig(inference_mode=inference_mode, **config.encoder_lora_config)
             self.encoder = PeftModel(self.encoder, encoder_lora_config)
 
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(config.dropout_prob)
         self.classifier_head1 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
         self.classifier_head2 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
 
@@ -184,7 +193,6 @@ class MultiheadModel(PreTrainedModel):
 
         sequence_output = outputs.last_hidden_state
 
-        # Mean pooling
         if attention_mask is not None:
             mask_expanded = attention_mask.unsqueeze(-1).expand(sequence_output.size()).to(sequence_output.dtype)
             sum_embeddings = torch.sum(sequence_output * mask_expanded, 1)
@@ -283,6 +291,8 @@ def parse_args():
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
     parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
+    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
+    parser.add_argument("--dropout-prob", type=float, default=0.1, help="Dropout probability")
     parser.add_argument("--lora-r", type=int, default=32, help="LoRA Rank")
     parser.add_argument("--lora-alpha", type=int, default=32, help="LoRA Alpha")
     parser.add_argument("--lora-dropout", type=float, default=0.01, help="LoRA Dropout")
@@ -346,6 +356,7 @@ def main(args):
             "bias": args.lora_bias,
             "target_modules": "all-linear",
         },
+        dropout_prob=args.dropout_prob,
         use_gradient_checkpointing=args.gradient_checkpointing,
     )
 
@@ -398,10 +409,10 @@ def main(args):
         data_seed=args.seed,
     )
 
-    train_dataset = MultiheadStopDecisionDataset(args.train_data_path, tokenizer, args.max_length)
+    train_dataset = MultiheadStopDecisionDataset(args.train_data_path, tokenizer, args.max_length, args.target_label)
     print(f"Number of training samples: {len(train_dataset)}", flush=True)
 
-    eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length)
+    eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label)
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
     trainer = MultiheadTrainer(
@@ -418,7 +429,7 @@ def main(args):
 
     print("Training completed. Evaluating on test dataset...\n", flush=True)
 
-    test_dataset = MultiheadStopDecisionDataset(args.test_data_path, tokenizer, args.max_length)
+    test_dataset = MultiheadStopDecisionDataset(args.test_data_path, tokenizer, args.max_length, args.target_label)
     print(f"Number of test samples: {len(test_dataset)}", flush=True)
 
     _, _, metrics = trainer.predict(test_dataset)

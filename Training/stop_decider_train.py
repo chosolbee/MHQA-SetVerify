@@ -28,14 +28,21 @@ from pipeline.answer_generator.prompts import gen_final_answer_prompt
 
 
 class StopDecisionDataset(Dataset):
-    def __init__(self, filepath, tokenizer, max_length=8192):
+    def __init__(self, filepath, tokenizer, max_length=8192, target_label="prob"):
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.target_label = target_label
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
             self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
             np.random.shuffle(self.data)
+
+        pos_samples = [trace for trace in self.data if trace[target_label] > trace[f"max_cont_{target_label}"]]
+        neg_samples = [trace for trace in self.data if trace[target_label] < trace[f"max_cont_{target_label}"]]
+        min_len = min(len(pos_samples), len(neg_samples))
+        self.data = pos_samples[:min_len] + neg_samples[:min_len]
+        np.random.shuffle(self.data)
 
     def __len__(self):
         return len(self.data)
@@ -43,8 +50,8 @@ class StopDecisionDataset(Dataset):
     def __getitem__(self, idx):
         trace = self.data[idx]
         chat = gen_final_answer_prompt(trace["question"], trace["trace"])
-        label1 = trace["prob"]
-        label2 = trace["max_cont_prob"]
+        label1 = trace[self.target_label]
+        label2 = trace[f"max_cont_{self.target_label}"]
 
         encoding = self.tokenizer.apply_chat_template(
             chat,
@@ -62,20 +69,25 @@ class StopDecisionDataset(Dataset):
         return encoding
 
 
-def compute_loss_func(target_type="abs"):
+def compute_loss_func(target_type="abs_bce"):
     def func(outputs, labels, num_items_in_batch=None):
         logits = outputs.logits.squeeze(-1)
-        if target_type == "abs":
+        if target_type == "abs_bce":
             targets = labels[:, 0]
+            loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
+        elif target_type == "abs_mse":
+            targets = labels[:, 0]
+            loss_fn = nn.MSELoss(reduction="sum")
         elif target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
             torch.nan_to_num(targets, nan=0.0)
+            loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
         elif target_type == "hard_diff":
             targets = (labels[:, 0] > labels[:, 1]).float()
+            loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
         else:
             raise ValueError(f"Unknown target type: {target_type}")
 
-        loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
         loss = loss_fn(logits, targets)
         if num_items_in_batch is not None:
             loss = loss / num_items_in_batch
@@ -87,14 +99,16 @@ def compute_loss_func(target_type="abs"):
     return func
 
 
-def compute_metrics(threshold=0.8, target_type="abs"):
+def compute_metrics(threshold=0.8, target_type="abs_bce"):
     def func(eval_pred):
         def sigmoid(x):
             return 1 / (1 + np.exp(-x))
 
         logits, labels = eval_pred
         preds = sigmoid(logits.squeeze(-1))
-        if target_type == "abs":
+        if target_type == "abs_bce":
+            targets = labels[:, 0]
+        elif target_type == "abs_mse":
             targets = labels[:, 0]
         elif target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
@@ -128,6 +142,7 @@ def parse_args():
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
     parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
+    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
     parser.add_argument("--lora-r", type=int, default=32, help="LoRA Rank")
     parser.add_argument("--lora-alpha", type=int, default=32, help="LoRA Alpha")
     parser.add_argument("--lora-dropout", type=float, default=0.01, help="LoRA Dropout")
@@ -151,7 +166,7 @@ def parse_args():
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
     parser.add_argument("--threshold", type=float, default=0.8, help="Threshold for stop decision")
-    parser.add_argument("--target-type", type=str, default="abs", choices=["abs", "soft_diff", "hard_diff"], help="Target Type for Training")
+    parser.add_argument("--target-type", type=str, default="abs_bce", choices=["abs_bce", "abs_mse", "soft_diff", "hard_diff"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
@@ -244,10 +259,10 @@ def main(args):
         data_seed=args.seed,
     )
 
-    train_dataset = StopDecisionDataset(args.train_data_path, tokenizer, args.max_length)
+    train_dataset = StopDecisionDataset(args.train_data_path, tokenizer, args.max_length, args.target_label)
     print(f"Number of training samples: {len(train_dataset)}", flush=True)
 
-    eval_dataset = StopDecisionDataset(args.eval_data_path, tokenizer, args.max_length)
+    eval_dataset = StopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label)
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
     trainer = Trainer(
@@ -264,7 +279,7 @@ def main(args):
 
     print("Training completed. Evaluating on test dataset...\n", flush=True)
 
-    test_dataset = StopDecisionDataset(args.test_data_path, tokenizer, args.max_length)
+    test_dataset = StopDecisionDataset(args.test_data_path, tokenizer, args.max_length, args.target_label)
     print(f"Number of test samples: {len(test_dataset)}", flush=True)
 
     _, _, metrics = trainer.predict(test_dataset)
