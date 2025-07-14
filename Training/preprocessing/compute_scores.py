@@ -148,6 +148,9 @@ if __name__ == "__main__":
             trace["log_prob"] = log_p.item()
             trace["prob"] = p.item()
 
+            with open(args.output_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(trace, ensure_ascii=False) + "\n")
+
             del completion_logits, completion_token_ids, log_probs, completion_log_probs
 
         del logits
@@ -166,7 +169,7 @@ if __name__ == "__main__":
 
         print("Writing output...")
 
-        df.to_json(args.output_path, orient="records", lines=True)
+        df.to_json(args.output_path, orient="records", lines=True, force_ascii=False, mode="w")
 
         print(f"Processing complete. Output written to {args.output_path}")
 
