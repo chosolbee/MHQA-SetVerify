@@ -27,14 +27,15 @@ from peft import LoraConfig, TaskType, PeftModel, prepare_model_for_kbit_trainin
 import wandb
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from config import WANDB_ENTITY
-from pipeline.answer_generator.prompts import gen_final_answer_prompt
+from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
 
 
 class MultiheadStopDecisionDataset(Dataset):
-    def __init__(self, filepath, tokenizer, max_length=4096, target_label="prob"):
+    def __init__(self, filepath, tokenizer, max_length=4096, target_label="prob", use_docs_only=False):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.target_label = target_label
+        self.use_docs_only = use_docs_only
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
@@ -48,12 +49,27 @@ class MultiheadStopDecisionDataset(Dataset):
         self.data = pos_samples[:min_len] + neu_samples[:min_len] + neg_samples[:min_len]
         np.random.shuffle(self.data)
 
+    def extract_documents_only(self, trace_text):
+        documents = []
+        lines = trace_text.split('\n')
+        for line in lines:
+            if line.startswith("Document: "):
+                documents.append(line)
+        return '\n'.join(documents)
+
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         trace = self.data[idx]
-        chat = gen_final_answer_prompt(trace["question"], trace["trace"])
+
+        if self.use_docs_only:
+            filtered_trace = self.extract_documents_only(trace["trace"])
+            chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
+        else:
+            filtered_trace = trace["trace"]
+            chat = gen_final_answer_prompt(trace["question"], filtered_trace)
+
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
@@ -292,6 +308,7 @@ def parse_args():
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
     parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
+    parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")    
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
     parser.add_argument("--dropout-prob", type=float, default=0.1, help="Dropout probability")
     parser.add_argument("--lora-r", type=int, default=32, help="LoRA Rank")
@@ -310,10 +327,10 @@ def parse_args():
     parser.add_argument("--gradient-checkpointing", action="store_true", help="Use Gradient Checkpointing")
     parser.add_argument("--bf16", action="store_true", help="Use BF16")
     parser.add_argument("--num-epochs", type=int, default=3, help="Number of Epochs")
-    parser.add_argument("--eval-steps", type=int, default=200, help="Evaluation Steps")
-    parser.add_argument("--save-steps", type=int, default=200, help="Save Steps")
+    parser.add_argument("--eval-steps", type=int, default=500, help="Evaluation Steps")
+    parser.add_argument("--save-steps", type=int, default=500, help="Save Steps")
     parser.add_argument("--save-total-limit", type=int, default=3, help="Total Number of Saved Checkpoints")
-    parser.add_argument("--logging-steps", type=int, default=10, help="Logging Steps")
+    parser.add_argument("--logging-steps", type=int, default=100, help="Logging Steps")
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
@@ -410,10 +427,10 @@ def main(args):
         data_seed=args.seed,
     )
 
-    train_dataset = MultiheadStopDecisionDataset(args.train_data_path, tokenizer, args.max_length, args.target_label)
+    train_dataset = MultiheadStopDecisionDataset(args.train_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
     print(f"Number of training samples: {len(train_dataset)}", flush=True)
 
-    eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label)
+    eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_labe, args.use_docs_only)
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
     trainer = MultiheadTrainer(
@@ -430,7 +447,7 @@ def main(args):
 
     print("Training completed. Evaluating on test dataset...\n", flush=True)
 
-    test_dataset = MultiheadStopDecisionDataset(args.test_data_path, tokenizer, args.max_length, args.target_label)
+    test_dataset = MultiheadStopDecisionDataset(args.test_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
     print(f"Number of test samples: {len(test_dataset)}", flush=True)
 
     _, _, metrics = trainer.predict(test_dataset)
