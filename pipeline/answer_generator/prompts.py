@@ -333,12 +333,59 @@ Intermediate answer: Hurricane sandy hit New York City in October 28, 2012.
 October 28, 2012
 """
 
+FINAL_ANSWER_GENERATION_DOCS_SYSTEM_PROMPT = """
+Given an original question and a series of documents, generate the final answer to the original question.
+
+Process:
+- You receive:
+    - Main question: <original question>
+    - One or more documents in the format:
+      - Document: <Wikipedia snippet>
+
+- Your task:
+    1. Focus on answering the original question.
+    2. Use all provided documents as evidence to connect information across passages.
+    3. Output only the final answer, with no additional text. The answer should be a single word or a short phrase (no full sentences).
+
+Output only the process after the given prompt. Do not repeat the given prompt in your response.
+
+Here are some examples:
+
+#
+## Input
+Main question: What is the major railroad museum located in the location where Andre Bloc lived at his time of death?
+
+Document: André Bloc (Algiers, May 23, 1896 – New Delhi, November 8, 1966) was a French sculptor, magazine editor, and founder of several specialist journals. He founded the "Groupe Espace" in 1949.
+Document: New Delhi is home to Indira Gandhi Memorial Museum, National Gallery of Modern Art, National Museum of Natural History, National Rail Museum, National Handicrafts and Handlooms Museum, National Philatelic Museum, Nehru Planetarium, Shankar's International Dolls Museum. and Supreme Court of India Museum.
+## Output
+National Rail Museum
+
+#
+## Input
+Main question: What is the least popular official language in the country where a spiral viaduct is located in Karin Thomas' birthplace?
+
+Document: Karin Thomas (born 3 October 1961 in Brusio) was a Swiss cross country skier who competed from 1982 to 1988.
+Document: Brusio spiral viaduct: A signature structure of the World Heritage-listed Bernina railway, it is located near Brusio, in the Canton of Graubünden, Switzerland.
+Document: Switzerland has four official languages: principally German (63.5% total population share), French (22.5%) in the west; and Italian (8.1%) in the south. The fourth official language, Romansh (0.5%), is a Romance language spoken locally in the southeastern trilingual canton of Graubünden.
+## Output
+Romansh
+
+#
+## Input
+Main question: When did hurricane Sandy hit the city where The Dealers' performer was born?
+
+Document: The Dealers is a 1964 album by jazz musician Mal Waldron released on Status Records, catalogue 8316. The album consists of unreleased takes from two sessions that resulted in two prior albums. "Blue Calypso" and "Falling In Love With Love" are from the April 19, 1957 session that resulted in half of 1957 Waldron's "Mal/2" album; these tracks can currently be found as additional tracks on the CD reissue of that album. "Dealin'" and "Wheelin" are from a September 20, 1957 session, and are alternate takes of tracks originally released on the 1958 "Wheelin' & Dealin'" album (Prestige PRLP 7131); these tracks can currently be found as additional tracks on the CD reissue of that album. All tracks are also available as part of the 2009 John Coltrane's box set "Side Steps".
+Document: Malcolm Earl "Mal" Waldron (August 16, 1925 – December 2, 2002) was an American jazz pianist, composer, and arranger. Mal Waldron was born in New York City on August 16, 1925, to West Indian immigrants. His father was a mechanical engineer who worked on the Long Island Rail Road. The family moved to Jamaica, Queens when Mal was four years old. Waldron's parents discouraged his initial interest in jazz, but he was able to maintain it by listening to swing on the radio.
+Document: Effects of Hurricane Sandy in New York: Hurricane Sandy Category 1 hurricane (SSHWS / NWS) Satellite image of Sandy at 4: 15 p.m. EDT on October 29 as it was about to make landfall on the Jersey Shore Formed October 28, 2012 (First rainbands begin to affect New Jersey) Dissipated November 2, 2012 (Dissipated as extratropical cyclone) (Extratropical after October 29) Highest winds 1 - minute sustained: 80 mph (130 km / h) Highest gust Gusts: 100 mph (155 km / h) Lowest pressure 945 mbar (hPa); 27.91 inHg Fatalities 53 total Damage $32 billion (2012 USD) (Estimated damage total) Areas affected New York, especially the New York metropolitan area Part of the 2012 Atlantic hurricane season Part of a series on Hurricane Sandy General Meteorological history Impact Greater Antilles United States Maryland and Washington, D.C. New Jersey New York New England Canada Other wikis Commons: Sandy images Wikinews: Sandy stories
+## Output
+October 28, 2012
+"""
+
 
 FINAL_ANSWER_GENERATION_USER_PROMPT = "Now, please provide the final answer to the main question. Respond with an appropriate answer only, do not explain yourself or output anything else."
 
 
 def gen_intermediate_answer_prompt(trace: str) -> str:
-    """Generate prompt for intermediate answer generation"""
     chat = [
         {
             "role": "system",
@@ -354,11 +401,24 @@ def gen_intermediate_answer_prompt(trace: str) -> str:
 
 
 def gen_final_answer_prompt(question: str, trace: str) -> str:
-    """Generate prompt for final answer generation"""
     chat = [
         {
             "role": "system",
             "content": FINAL_ANSWER_GENERATION_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + FINAL_ANSWER_GENERATION_USER_PROMPT,
+        },
+    ]
+
+    return chat
+
+def gen_final_answer_docs_only_prompt(question: str, trace: str) -> str:
+    chat = [
+        {
+            "role": "system",
+            "content": FINAL_ANSWER_GENERATION_DOCS_SYSTEM_PROMPT,
         },
         {
             "role": "user",

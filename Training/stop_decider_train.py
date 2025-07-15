@@ -24,7 +24,7 @@ from peft import LoraConfig, TaskType, PeftModelForSequenceClassification, prepa
 import wandb
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from config import WANDB_ENTITY
-from pipeline.answer_generator.prompts import gen_final_answer_prompt
+from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
 
 
 class StopDecisionDataset(Dataset):
@@ -45,7 +45,7 @@ class StopDecisionDataset(Dataset):
         min_len = min(len(pos_samples), len(neg_samples), len(neu_samples))
         self.data = pos_samples[:min_len] + neg_samples[:min_len] + neu_samples[:min_len]
         np.random.shuffle(self.data)
-
+        
     def extract_documents_only(self, trace_text):
         documents = []
         lines = trace_text.split('\n')
@@ -53,7 +53,7 @@ class StopDecisionDataset(Dataset):
             if line.startswith("Document: "):
                 documents.append(line)
         return '\n'.join(documents)
-    
+
     def __len__(self):
         return len(self.data)
 
@@ -62,10 +62,11 @@ class StopDecisionDataset(Dataset):
 
         if self.use_docs_only:
             filtered_trace = self.extract_documents_only(trace["trace"])
+            chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
         else:
             filtered_trace = trace["trace"]
-
-        chat = gen_final_answer_prompt(trace["question"], filtered_trace)
+            chat = gen_final_answer_prompt(trace["question"], filtered_trace)
+            
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
