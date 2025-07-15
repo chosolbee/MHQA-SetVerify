@@ -327,10 +327,10 @@ def parse_args():
     parser.add_argument("--gradient-checkpointing", action="store_true", help="Use Gradient Checkpointing")
     parser.add_argument("--bf16", action="store_true", help="Use BF16")
     parser.add_argument("--num-epochs", type=int, default=3, help="Number of Epochs")
-    parser.add_argument("--eval-steps", type=int, default=500, help="Evaluation Steps")
-    parser.add_argument("--save-steps", type=int, default=500, help="Save Steps")
+    parser.add_argument("--eval-steps", type=int, default=200, help="Evaluation Steps")
+    parser.add_argument("--save-steps", type=int, default=200, help="Save Steps")
     parser.add_argument("--save-total-limit", type=int, default=3, help="Total Number of Saved Checkpoints")
-    parser.add_argument("--logging-steps", type=int, default=100, help="Logging Steps")
+    parser.add_argument("--logging-steps", type=int, default=10, help="Logging Steps")
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
@@ -430,7 +430,7 @@ def main(args):
     train_dataset = MultiheadStopDecisionDataset(args.train_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
     print(f"Number of training samples: {len(train_dataset)}", flush=True)
 
-    eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_labe, args.use_docs_only)
+    eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
     trainer = MultiheadTrainer(
