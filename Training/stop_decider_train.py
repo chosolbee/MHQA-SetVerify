@@ -81,10 +81,10 @@ def compute_loss_func(target_type="abs_bce"):
             loss_fn = nn.MSELoss(reduction="sum")
         elif target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
-            torch.nan_to_num(targets, nan=0.0)
+            targets = torch.nan_to_num(targets, nan=0.0)
             loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
         elif target_type == "hard_diff":
-            targets = (labels[:, 0] > labels[:, 1]).float()
+            targets = (labels[:, 0] >= labels[:, 1]).float()
             loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
         else:
             raise ValueError(f"Unknown target type: {target_type}")
@@ -113,9 +113,9 @@ def compute_metrics(threshold=0.8, target_type="abs_bce"):
             targets = labels[:, 0]
         elif target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
-            np.nan_to_num(targets, nan=0.0)
+            targets = np.nan_to_num(targets, nan=0.0)
         elif target_type == "hard_diff":
-            targets = (labels[:, 0] > labels[:, 1]).astype(float)
+            targets = (labels[:, 0] >= labels[:, 1]).astype(float)
         else:
             raise ValueError(f"Unknown target type: {target_type}")
 
@@ -160,10 +160,10 @@ def parse_args():
     parser.add_argument("--gradient-checkpointing", action="store_true", help="Use Gradient Checkpointing")
     parser.add_argument("--bf16", action="store_true", help="Use BF16")
     parser.add_argument("--num-epochs", type=int, default=3, help="Number of Epochs")
-    parser.add_argument("--eval-steps", type=int, default=500, help="Evaluation Steps")
-    parser.add_argument("--save-steps", type=int, default=500, help="Save Steps")
+    parser.add_argument("--eval-steps", type=int, default=200, help="Evaluation Steps")
+    parser.add_argument("--save-steps", type=int, default=200, help="Save Steps")
     parser.add_argument("--save-total-limit", type=int, default=3, help="Total Number of Saved Checkpoints")
-    parser.add_argument("--logging-steps", type=int, default=100, help="Logging Steps")
+    parser.add_argument("--logging-steps", type=int, default=10, help="Logging Steps")
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
     parser.add_argument("--threshold", type=float, default=0.8, help="Threshold for stop decision")
