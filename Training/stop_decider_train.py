@@ -45,15 +45,14 @@ class StopDecisionDataset(Dataset):
         min_len = min(len(pos_samples), len(neg_samples), len(neu_samples))
         self.data = pos_samples[:min_len] + neg_samples[:min_len] + neu_samples[:min_len]
         np.random.shuffle(self.data)
-        
+
     def extract_documents_only(self, trace_text):
         documents = []
         lines = trace_text.split('\n')
         for line in lines:
             if line.startswith("Document: "):
-                doc_content = line[len("Document: "):]
-                documents.append(doc_content)
-        return '[SEP]'.join(documents)
+                documents.append(line)
+        return '\n'.join(documents)
     
     def __len__(self):
         return len(self.data)
