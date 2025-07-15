@@ -81,7 +81,7 @@ def compute_loss_func(target_type="abs_bce"):
             loss_fn = nn.MSELoss(reduction="sum")
         elif target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
-            torch.nan_to_num(targets, nan=0.0)
+            targets = torch.nan_to_num(targets, nan=0.0)
             loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
         elif target_type == "hard_diff":
             targets = (labels[:, 0] > labels[:, 1]).float()
@@ -113,7 +113,7 @@ def compute_metrics(threshold=0.8, target_type="abs_bce"):
             targets = labels[:, 0]
         elif target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
-            np.nan_to_num(targets, nan=0.0)
+            targets = np.nan_to_num(targets, nan=0.0)
         elif target_type == "hard_diff":
             targets = (labels[:, 0] > labels[:, 1]).astype(float)
         else:
