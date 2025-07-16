@@ -45,7 +45,7 @@ class StopDecisionDataset(Dataset):
         min_len = min(len(pos_samples), len(neg_samples), len(neu_samples))
         self.data = pos_samples[:min_len] + neg_samples[:min_len] + neu_samples[:min_len]
         np.random.shuffle(self.data)
-        
+
     def extract_documents_only(self, trace_text):
         documents = []
         lines = trace_text.split('\n')
@@ -66,7 +66,7 @@ class StopDecisionDataset(Dataset):
         else:
             filtered_trace = trace["trace"]
             chat = gen_final_answer_prompt(trace["question"], filtered_trace)
-            
+
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
@@ -161,12 +161,14 @@ def parse_args():
     parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
+    parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
+    parser.add_argument("--use-lora", action="store_true", help="Use LoRA for training")
     parser.add_argument("--lora-r", type=int, default=32, help="LoRA Rank")
     parser.add_argument("--lora-alpha", type=int, default=32, help="LoRA Alpha")
     parser.add_argument("--lora-dropout", type=float, default=0.01, help="LoRA Dropout")
     parser.add_argument("--lora-bias", type=str, default="none", choices=["none", "all", "lora_only"], help="LoRA Bias Type")
     parser.add_argument("--trainer-output-dir", type=str, help="Training Output Path")
-    parser.add_argument("--max-length", type=int, default=4096, help="Max Length of Tokenizer")
+    parser.add_argument("--max-length", type=int, default=4096, help="Max Length of Inputs")
     parser.add_argument("--optimizer", type=str, default="adamw_torch_fused", help="Optimizer Type")
     parser.add_argument("--learning-rate", type=float, default=5e-5, help="Learning Rate")
     parser.add_argument("--lr-scheduler-type", type=str, default="cosine", help="Learning Rate Scheduler Type")
@@ -210,12 +212,14 @@ def main(args):
     else:
         os.environ["WANDB_MODE"] = "disabled"
 
-    nf4_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.bfloat16 if args.bf16 else torch.float32,
-    )
+    nf4_config = None
+    if args.use_4bit:
+        nf4_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.bfloat16 if args.bf16 else torch.float32,
+        )
 
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_id,
@@ -223,6 +227,7 @@ def main(args):
         use_cache=False,
         device_map={"": local_rank},
         num_labels=1,
+        max_position_embeddings=args.max_length,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
@@ -232,21 +237,25 @@ def main(args):
 
     print("Model and tokenizer loaded successfully.", flush=True)
 
-    lora_config = LoraConfig(
-        task_type=TaskType.SEQ_CLS,
-        inference_mode=False,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        r=args.lora_r,
-        bias=args.lora_bias,
-        target_modules="all-linear",
-    )
+    if args.use_lora:
+        lora_config = LoraConfig(
+            task_type=TaskType.SEQ_CLS,
+            inference_mode=False,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            r=args.lora_r,
+            bias=args.lora_bias,
+            target_modules="all-linear",
+        )
 
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=args.gradient_checkpointing)
-    model = PeftModelForSequenceClassification(model, lora_config)
+        if args.use_4bit:
+            model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=args.gradient_checkpointing)
+
+        model = PeftModelForSequenceClassification(model, lora_config)
+
+        print("LoRA configuration applied successfully.", flush=True)
+
     model.print_trainable_parameters()
-
-    print("LoRA configuration applied successfully.", flush=True)
 
     training_args = TrainingArguments(
         output_dir=args.trainer_output_dir,
