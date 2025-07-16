@@ -70,15 +70,30 @@ class StopDecisionDataset(Dataset):
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
-        encoding = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=True,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt",
-            return_dict=True
-        )
+        if hasattr(self.tokenizer, 'chat_template') and self.tokenizer.chat_template is not None:
+            encoding = self.tokenizer.apply_chat_template(
+                chat,
+                tokenize=True,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt",
+                return_dict=True
+            )
+        else:
+            if isinstance(chat, list):
+                text = ""
+                for message in chat:
+                    text += message['content'] + "\n"
+                text = text.strip()
+
+            encoding = self.tokenizer(
+                text,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt"
+            )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
         encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
@@ -221,6 +236,21 @@ def main(args):
             bnb_4bit_compute_dtype=torch.bfloat16 if args.bf16 else torch.float32,
         )
 
+    model_kwargs = {
+        "quantization_config": nf4_config,
+        "device_map": {"": local_rank},
+        "num_labels": 1,
+        "max_position_embeddings" : args.max_length,
+    }
+
+    if "deberta" not in args.model_id.lower():
+        model_kwargs["use_cache"] = False
+
+    model = AutoModelForSequenceClassification.from_pretrained(
+        args.model_id,
+        **model_kwargs
+    )
+
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_id,
         quantization_config=nf4_config,
@@ -255,7 +285,13 @@ def main(args):
 
         print("LoRA configuration applied successfully.", flush=True)
 
-    model.print_trainable_parameters()
+    if hasattr(model, 'print_trainable_parameters'):
+        model.print_trainable_parameters()
+    else:
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
 
     training_args = TrainingArguments(
         output_dir=args.trainer_output_dir,
