@@ -35,12 +35,12 @@ class MultiheadStopDecisionDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.target_label = target_label
-        self.use_docs_only = use_docs_only
 
         self.has_chat_template = (
             hasattr(self.tokenizer, 'chat_template') and 
             self.tokenizer.chat_template is not None
         )
+        self.use_docs_only = use_docs_only
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
@@ -103,13 +103,52 @@ class MultiheadStopDecisionDataset(Dataset):
 
         return encoding
 
-    def _convert_chat_to_text(self, chat):
-        if isinstance(chat, list):
-            text = ""
-            for message in chat:
-                text += message['content'] + "\n"
-            return text.strip()
-        return chat
+    def _convert_chat_to_text(self, chat): # Encoder-only
+        content = ""
+        for message in chat:
+            if message['role'] == 'user':
+                content = message['content']
+                break
+
+        lines = content.split('\n')
+        question = ""
+        for line in lines:
+            if line.startswith("Main question: "):
+                question = line[len("Main question: "):]
+                break
+
+        if self.use_docs_only:
+            # docs only
+            documents = []
+            for line in lines:
+                if line.startswith("Document: "):
+                    documents.append(line[len("Document: "):])
+
+            text_parts = [question] + documents
+            return "[SEP]".join(text_parts)
+        else: # full trace
+            text_parts = [question]
+
+            current_followup = ""
+            current_doc = ""
+            current_answer = ""
+
+            for line in lines:
+                if line.startswith("Follow up: "):
+                    if current_followup: 
+                        text_parts.extend([f"follow up:{current_followup}", current_doc, f"intermediate answer:{current_answer}"])
+                    current_followup = line[len("Follow up: "):]
+                    current_doc = ""
+                    current_answer = ""
+                elif line.startswith("Document: "):
+                    current_doc = line[len("Document: "):]
+                elif line.startswith("Intermediate answer: "):
+                    current_answer = line[len("Intermediate answer: "):]
+
+            if current_followup:
+                text_parts.extend([f"follow up:{current_followup}", current_doc, f"intermediate answer:{current_answer}"])
+
+            return "[SEP]".join(text_parts)
 
 
 class MultiheadConfig(PretrainedConfig):
