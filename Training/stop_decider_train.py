@@ -87,6 +87,7 @@ class StopDecisionDataset(Dataset):
             )
         else: # Encoder
             text = self._convert_chat_to_text(chat)
+
             encoding = self.tokenizer(
                 text,
                 truncation=True,
@@ -124,29 +125,19 @@ class StopDecisionDataset(Dataset):
             
             text_parts = [question] + documents
             return sep_token.join(text_parts)
-        
+
         else: # full trace
             text_parts = [question]
             
-            current_followup = ""
-            current_doc = ""
-            current_answer = ""
-            
             for line in lines:
+                line = line.strip()
                 if line.startswith("Follow up: "):
-                    if current_followup: 
-                        text_parts.extend([f"follow up:{current_followup}", current_doc, f"intermediate answer:{current_answer}"])
-                    current_followup = line[len("Follow up: "):]
-                    current_doc = ""
-                    current_answer = ""
+                    text_parts.append(f"follow up:{line[len('Follow up: '):]}")
                 elif line.startswith("Document: "):
-                    current_doc = line[len("Document: "):]
+                    text_parts.append(line[len("Document: "):])
                 elif line.startswith("Intermediate answer: "):
-                    current_answer = line[len("Intermediate answer: "):]
-            
-            if current_followup:
-                text_parts.extend([f"follow up:{current_followup}", current_doc, f"intermediate answer:{current_answer}"])
-            
+                    text_parts.append(f"intermediate answer:{line[len('Intermediate answer: '):]}")
+
             return sep_token.join(text_parts)
         
 def compute_loss_func(target_type="abs_bce"):
