@@ -230,10 +230,8 @@ class MultiheadModel(PreTrainedModel):
         sequence_output = outputs.last_hidden_state
 
         if self.config.encoder_arch == "encoder_only":
-            # For encoder-only models, we typically use the first token's output (CLS token)
             pooled_output = sequence_output[:, 0, :]
         elif self.config.encoder_arch == "decoder_only":
-            # For decoder-only models, we can use mean pooling
             if attention_mask is not None:
                 mask_expanded = attention_mask.unsqueeze(-1).expand(sequence_output.size()).to(sequence_output.dtype)
                 sum_embeddings = torch.sum(sequence_output * mask_expanded, 1)
