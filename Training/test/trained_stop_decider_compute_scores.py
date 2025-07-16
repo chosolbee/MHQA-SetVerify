@@ -12,7 +12,7 @@ from transformers import (
 )
 from peft import PeftModelForSequenceClassification
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
-from pipeline.answer_generator.prompts import gen_final_answer_prompt
+from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
 
 
 def parse_args():
@@ -24,9 +24,17 @@ def parse_args():
     parser.add_argument("--bf16", action="store_true", help="Use bf16 precision for model")
     parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the trained LoRA adapter")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
 
     return parser.parse_args()
 
+def extract_documents_only(trace_text):
+    documents = []
+    lines = trace_text.split('\n')
+    for line in lines:
+        if line.startswith("Document: "):
+            documents.append(line)
+    return '\n'.join(documents)
 
 if __name__ == "__main__":
     args = parse_args()
@@ -54,6 +62,8 @@ if __name__ == "__main__":
         device_map="auto"
     )
 
+    print(f"args.checkpoint_path: {args.checkpoint_path}")
+
     model.eval()
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
@@ -71,7 +81,11 @@ if __name__ == "__main__":
     for i in tqdm(range(0, len(traces), args.batch_size)):
         batch_traces = traces[i:i + args.batch_size]
 
-        batch_prompts = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces]
+        if args.use_docs_only:
+            batch_prompts = [gen_final_answer_docs_only_prompt(trace["question"], extract_documents_only(trace["trace"])) for trace in batch_traces]
+        else:
+            batch_prompts = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces]
+    
         inputs = tokenizer.apply_chat_template(
             batch_prompts,
             tokenize=True,
