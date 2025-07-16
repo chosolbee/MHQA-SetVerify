@@ -78,7 +78,7 @@ class MultiheadStopDecisionDataset(Dataset):
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
-        if self.has_chat_template:
+        if self.has_chat_template: #Decoder
             encoding = self.tokenizer.apply_chat_template(
                 chat,
                 tokenize=True,
@@ -88,7 +88,7 @@ class MultiheadStopDecisionDataset(Dataset):
                 return_tensors="pt",
                 return_dict=True
             )
-        else:
+        else: #Encoder
             text = self._convert_chat_to_text(chat)
             encoding = self.tokenizer(
                 text,
@@ -117,15 +117,17 @@ class MultiheadStopDecisionDataset(Dataset):
                 question = line[len("Main question: "):]
                 break
 
-        if self.use_docs_only:
-            # docs only
+        sep_token = self.tokenizer.sep_token if self.tokenizer.sep_token else "[SEP]"
+
+        if self.use_docs_only: # docs only
             documents = []
             for line in lines:
                 if line.startswith("Document: "):
                     documents.append(line[len("Document: "):])
 
             text_parts = [question] + documents
-            return "[SEP]".join(text_parts)
+            return sep_token.join(text_parts)
+
         else: # full trace
             text_parts = [question]
 
@@ -148,7 +150,7 @@ class MultiheadStopDecisionDataset(Dataset):
             if current_followup:
                 text_parts.extend([f"follow up:{current_followup}", current_doc, f"intermediate answer:{current_answer}"])
 
-            return "[SEP]".join(text_parts)
+            return sep_token.join(text_parts)
 
 
 class MultiheadConfig(PretrainedConfig):
