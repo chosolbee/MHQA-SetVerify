@@ -34,6 +34,11 @@ class StopDecisionDataset(Dataset):
         self.target_label = target_label
         self.use_docs_only = use_docs_only
 
+        self.has_chat_template = (
+            hasattr(self.tokenizer, 'chat_template') and 
+            self.tokenizer.chat_template is not None
+        )
+
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
             self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
@@ -70,7 +75,7 @@ class StopDecisionDataset(Dataset):
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
-        if hasattr(self.tokenizer, 'chat_template') and self.tokenizer.chat_template is not None:
+        if self.has_chat_template:
             encoding = self.tokenizer.apply_chat_template(
                 chat,
                 tokenize=True,
@@ -81,12 +86,7 @@ class StopDecisionDataset(Dataset):
                 return_dict=True
             )
         else:
-            if isinstance(chat, list):
-                text = ""
-                for message in chat:
-                    text += message['content'] + "\n"
-                text = text.strip()
-
+            text = self._convert_chat_to_text(chat)
             encoding = self.tokenizer(
                 text,
                 truncation=True,
@@ -100,6 +100,14 @@ class StopDecisionDataset(Dataset):
 
         return encoding
 
+    def _convert_chat_to_text(self, chat):
+        if isinstance(chat, list):
+            text = ""
+            for message in chat:
+                text += message['content'] + "\n"
+            return text.strip()
+        return chat
+        
 
 def compute_loss_func(target_type="abs_bce"):
     def func(outputs, labels, num_items_in_batch=None):

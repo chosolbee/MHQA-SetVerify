@@ -37,6 +37,11 @@ class MultiheadStopDecisionDataset(Dataset):
         self.target_label = target_label
         self.use_docs_only = use_docs_only
 
+        self.has_chat_template = (
+            hasattr(self.tokenizer, 'chat_template') and 
+            self.tokenizer.chat_template is not None
+        )
+
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
             self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
@@ -73,20 +78,38 @@ class MultiheadStopDecisionDataset(Dataset):
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
-        encoding = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=True,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt",
-            return_dict=True
-        )
+        if self.has_chat_template:
+            encoding = self.tokenizer.apply_chat_template(
+                chat,
+                tokenize=True,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt",
+                return_dict=True
+            )
+        else:
+            text = self._convert_chat_to_text(chat)
+            encoding = self.tokenizer(
+                text,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt"
+            )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
         encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
 
         return encoding
+
+    def _convert_chat_to_text(self, chat):
+        if isinstance(chat, list):
+            text = ""
+            for message in chat:
+                text += message['content'] + "\n"
+            return text.strip()
+        return chat
 
 
 class MultiheadConfig(PretrainedConfig):
@@ -94,8 +117,7 @@ class MultiheadConfig(PretrainedConfig):
 
     def __init__(
         self,
-        encoder_name_or_path: str,
-        encoder_arch: str,
+        encoder_name_or_path: str = None,
         encoder_quantization_config: dict = None,
         encoder_lora_config: dict = None,
         dropout_prob: float = 0.1,
@@ -103,7 +125,6 @@ class MultiheadConfig(PretrainedConfig):
         **kwargs,
     ):
         self.encoder_name_or_path = encoder_name_or_path
-        self.encoder_arch = encoder_arch
         self.encoder_quantization_config = encoder_quantization_config
         self.encoder_lora_config = encoder_lora_config
         self.dropout_prob = dropout_prob
@@ -119,31 +140,30 @@ class MultiheadModel(PreTrainedModel):
         super().__init__(config)
 
         encoder_quantization_config = None
-        if hasattr(config, "encoder_quantization_config") and config.encoder_quantization_config is not None:
+        if hasattr(config, "encoder_quantization_config"):
             encoder_quantization_config = BitsAndBytesConfig(**config.encoder_quantization_config)
+            
+        model_kwargs = {
+            "quantization_config": encoder_quantization_config,
+            "torch_dtype": dtype,
+            **encoder_kwargs
+        }
+
+        if "deberta" not in config.encoder_name_or_path.lower():
+            model_kwargs["use_cache"] = False
 
         self.encoder = AutoModel.from_pretrained(
             config.encoder_name_or_path,
-            quantization_config=encoder_quantization_config,
-            torch_dtype=dtype,
-            **encoder_kwargs,
+            **model_kwargs
         )
 
-        if hasattr(config, "encoder_lora_config") and config.encoder_lora_config is not None:
-            if (
-                encoder_quantization_config is not None and
-                (encoder_quantization_config.load_in_4bit or encoder_quantization_config.load_in_8bit) and
-                not inference_mode
-            ):
-                self.encoder = prepare_model_for_kbit_training(
-                    self.encoder,
-                    use_gradient_checkpointing=config.use_gradient_checkpointing
-                )
+        if (encoder_quantization_config.load_in_4bit or encoder_quantization_config.load_in_8bit) and not inference_mode:
+            self.encoder = prepare_model_for_kbit_training(self.encoder, use_gradient_checkpointing=config.use_gradient_checkpointing)
 
+        if hasattr(config, "encoder_lora_config"):
             encoder_lora_config = LoraConfig(inference_mode=inference_mode, **config.encoder_lora_config)
             self.encoder = PeftModel(self.encoder, encoder_lora_config)
 
-        self.dense = nn.Linear(self.encoder.config.hidden_size, self.encoder.config.hidden_size, device=self.encoder.device, dtype=dtype)
         self.dropout = nn.Dropout(config.dropout_prob)
         self.classifier_head1 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
         self.classifier_head2 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
@@ -178,15 +198,6 @@ class MultiheadModel(PreTrainedModel):
             state_dict_encoder, strict=strict, assign=assign
         )
 
-        state_dict_dense = {
-            k.split(".", 1)[-1]: v
-            for k, v in state_dict.items()
-            if k.startswith("dense.")
-        }
-        missing_dense, unexpected_dense = self.dense.load_state_dict(
-            state_dict_dense, strict=strict, assign=assign
-        )
-
         state_dict_classifier_head1 = {
             k.split(".", 1)[-1]: v
             for k, v in state_dict.items()
@@ -205,8 +216,8 @@ class MultiheadModel(PreTrainedModel):
             state_dict_classifier_head2, strict=strict, assign=assign
         )
 
-        return missing_encoder + missing_dense + missing_classifier_head1 + missing_classifier_head2, \
-               unexpected_encoder + unexpected_dense + unexpected_classifier_head1 + unexpected_classifier_head2
+        return missing_encoder + missing_classifier_head1 + missing_classifier_head2, \
+               unexpected_encoder + unexpected_classifier_head1 + unexpected_classifier_head2
 
     def print_trainable_parameters(self):
         trainable_params = 0
@@ -220,7 +231,7 @@ class MultiheadModel(PreTrainedModel):
         print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.2f}%")
         return trainable_params, all_params
 
-    def forward(self, input_ids=None, attention_mask=None, **kwargs):
+    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
         outputs = self.encoder(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -229,23 +240,16 @@ class MultiheadModel(PreTrainedModel):
 
         sequence_output = outputs.last_hidden_state
 
-        if self.config.encoder_arch == "encoder_only":
-            pooled_output = sequence_output[:, 0, :]
-        elif self.config.encoder_arch == "decoder_only":
-            if attention_mask is not None:
-                mask_expanded = attention_mask.unsqueeze(-1).expand(sequence_output.size()).to(sequence_output.dtype)
-                sum_embeddings = torch.sum(sequence_output * mask_expanded, 1)
-                sum_mask = torch.clamp(mask_expanded.sum(1), min=1e-9)
-                pooled_output = sum_embeddings / sum_mask
-            else:
-                pooled_output = sequence_output.mean(dim=1)
-        elif self.config.encoder_arch == "encoder_decoder":
-            raise NotImplementedError("Encoder-decoder architecture is not supported yet.")
+        if attention_mask is not None:
+            mask_expanded = attention_mask.unsqueeze(-1).expand(sequence_output.size()).to(sequence_output.dtype)
+            sum_embeddings = torch.sum(sequence_output * mask_expanded, 1)
+            sum_mask = torch.clamp(mask_expanded.sum(1), min=1e-9)
+            pooled_output = sum_embeddings / sum_mask
         else:
-            raise ValueError(f"Unsupported encoder architecture: {self.config.encoder_arch}")
+            pooled_output = sequence_output.mean(dim=1)
 
-        pooled_output = self.dense(pooled_output)
         pooled_output = self.dropout(pooled_output)
+
         preds_head1 = self.classifier_head1(pooled_output)
         preds_head2 = self.classifier_head2(pooled_output)
 
@@ -256,11 +260,32 @@ class MultiheadModel(PreTrainedModel):
 
     def to(self, *args, **kwargs):
         self.encoder.to(*args, **kwargs)
-        self.dense.to(*args, **kwargs)
         self.dropout.to(*args, **kwargs)
         self.classifier_head1.to(*args, **kwargs)
         self.classifier_head2.to(*args, **kwargs)
         return self
+
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        if hasattr(self.encoder, 'gradient_checkpointing_enable'):
+            self.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+        else:
+            if hasattr(self.encoder, 'gradient_checkpointing'):
+                self.encoder.gradient_checkpointing = True
+
+    def gradient_checkpointing_disable(self):
+        if hasattr(self.encoder, 'gradient_checkpointing_disable'):
+            self.encoder.gradient_checkpointing_disable()
+        else:
+            if hasattr(self.encoder, 'gradient_checkpointing'):
+                self.encoder.gradient_checkpointing = False
+
+    def _set_gradient_checkpointing(self, module, value=False):
+        if hasattr(module, 'gradient_checkpointing'):
+            module.gradient_checkpointing = value
+
+    @property
+    def supports_gradient_checkpointing(self):
+        return True
 
 
 class MultiheadTrainer(Trainer):
@@ -332,21 +357,18 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Stop Decider Training Options")
 
     parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="Model ID for Stop Decider")
-    parser.add_argument("--model-arch", type=str, default="decoder_only", choices=["encoder_only", "decoder_only", "encoder_decoder"], help="Model Architecture")
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
     parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
+    parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")    
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
-    parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     parser.add_argument("--dropout-prob", type=float, default=0.1, help="Dropout probability")
-    parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
-    parser.add_argument("--use-lora", action="store_true", help="Use LoRA for training")
     parser.add_argument("--lora-r", type=int, default=32, help="LoRA Rank")
     parser.add_argument("--lora-alpha", type=int, default=32, help="LoRA Alpha")
     parser.add_argument("--lora-dropout", type=float, default=0.01, help="LoRA Dropout")
     parser.add_argument("--lora-bias", type=str, default="none", choices=["none", "all", "lora_only"], help="LoRA Bias Type")
     parser.add_argument("--trainer-output-dir", type=str, help="Training Output Path")
-    parser.add_argument("--max-length", type=int, default=4096, help="Max Length of Inputs")
+    parser.add_argument("--max-length", type=int, default=4096, help="Max Length of Tokenizer")
     parser.add_argument("--optimizer", type=str, default="adamw_torch_fused", help="Optimizer Type")
     parser.add_argument("--learning-rate", type=float, default=5e-5, help="Learning Rate")
     parser.add_argument("--lr-scheduler-type", type=str, default="cosine", help="Learning Rate Scheduler Type")
@@ -357,10 +379,10 @@ def parse_args():
     parser.add_argument("--gradient-checkpointing", action="store_true", help="Use Gradient Checkpointing")
     parser.add_argument("--bf16", action="store_true", help="Use BF16")
     parser.add_argument("--num-epochs", type=int, default=3, help="Number of Epochs")
-    parser.add_argument("--eval-steps", type=int, default=200, help="Evaluation Steps")
-    parser.add_argument("--save-steps", type=int, default=200, help="Save Steps")
+    parser.add_argument("--eval-steps", type=int, default=500, help="Evaluation Steps")
+    parser.add_argument("--save-steps", type=int, default=500, help="Save Steps")
     parser.add_argument("--save-total-limit", type=int, default=3, help="Total Number of Saved Checkpoints")
-    parser.add_argument("--logging-steps", type=int, default=10, help="Logging Steps")
+    parser.add_argument("--logging-steps", type=int, default=100, help="Logging Steps")
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
@@ -390,13 +412,12 @@ def main(args):
 
     config = MultiheadConfig(
         encoder_name_or_path=args.model_id,
-        encoder_arch=args.model_arch,
         encoder_quantization_config={
             "load_in_4bit": True,
             "bnb_4bit_quant_type": "nf4",
             "bnb_4bit_use_double_quant": True,
             "bnb_4bit_compute_dtype": "bfloat16" if args.bf16 else "float32",
-        } if args.use_4bit else None,
+        },
         encoder_lora_config={
             "task_type": TaskType.SEQ_CLS,
             "lora_alpha": args.lora_alpha,
@@ -404,18 +425,21 @@ def main(args):
             "r": args.lora_r,
             "bias": args.lora_bias,
             "target_modules": "all-linear",
-        } if args.use_lora else None,
+        },
         dropout_prob=args.dropout_prob,
         use_gradient_checkpointing=args.gradient_checkpointing,
     )
 
+    encoder_kwargs = {
+        "device_map": {"": local_rank},
+    }
+
+    if "deberta" not in args.model_id.lower():
+        encoder_kwargs["use_cache"] = False
+
     model = MultiheadModel(
         config,
-        encoder_kwargs={
-            "device_map": {"": local_rank},
-            "use_cache": False,
-            "max_position_embeddings": args.max_length,
-        },
+        encoder_kwargs=encoder_kwargs,
         inference_mode=False,
     )
 
@@ -427,6 +451,8 @@ def main(args):
     print("Model and tokenizer loaded successfully.", flush=True)
 
     model.print_trainable_parameters()
+
+    print("LoRA configuration applied successfully.", flush=True)
 
     training_args = TrainingArguments(
         output_dir=args.trainer_output_dir,
