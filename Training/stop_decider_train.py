@@ -32,6 +32,11 @@ class StopDecisionDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.target_label = target_label
+
+        self.has_chat_template = (
+            hasattr(self.tokenizer, 'chat_template') and 
+            self.tokenizer.chat_template is not None
+        )
         self.use_docs_only = use_docs_only
 
         with open(filepath, "r", encoding="utf-8") as f:
@@ -70,22 +75,71 @@ class StopDecisionDataset(Dataset):
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
-        encoding = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=True,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt",
-            return_dict=True
-        )
+        if self.has_chat_template: # Decoder
+            encoding = self.tokenizer.apply_chat_template(
+                chat,
+                tokenize=True,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt",
+                return_dict=True
+            )
+        else: # Encoder
+            text = self._convert_chat_to_text(chat)
+            
+            encoding = self.tokenizer(
+                text,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt"
+            )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
         encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
 
         return encoding
 
+    def _convert_chat_to_text(self, chat): # Encoder-only
+        content = ""
+        for message in chat:
+            if message['role'] == 'user':
+                content = message['content']
+                break
+        
+        lines = content.split('\n')
+        question = ""
+        for line in lines:
+            if line.startswith("Main question: "):
+                question = line[len("Main question: "):]
+                break
 
+        sep_token = self.tokenizer.sep_token if self.tokenizer.sep_token else "[SEP]"
+        
+        if self.use_docs_only: # docs only
+            documents = []
+            for line in lines:
+                if line.startswith("Document: "):
+                    documents.append(line[len("Document: "):])
+            
+            text_parts = [question] + documents
+            return sep_token.join(text_parts)
+
+        else: # full trace
+            text_parts = [question]
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith("Follow up: "):
+                    text_parts.append(line)
+                elif line.startswith("Document: "):
+                    text_parts.append(line)
+                elif line.startswith("Intermediate answer: "):
+                    text_parts.append(line)
+
+            return sep_token.join(text_parts)
+        
 def compute_loss_func(target_type="abs_bce"):
     def func(outputs, labels, num_items_in_batch=None):
         logits = outputs.logits.squeeze(-1)
@@ -221,15 +275,21 @@ def main(args):
             bnb_4bit_compute_dtype=torch.bfloat16 if args.bf16 else torch.float32,
         )
 
+    model_kwargs = {
+        "quantization_config": nf4_config,
+        "device_map": {"": local_rank},
+        "num_labels": 1,
+        "max_position_embeddings" : args.max_length,
+    }
+
+    if "deberta" not in args.model_id.lower():
+        model_kwargs["use_cache"] = False
+
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_id,
-        quantization_config=nf4_config,
-        use_cache=False,
-        device_map={"": local_rank},
-        num_labels=1,
-        max_position_embeddings=args.max_length,
+        **model_kwargs
     )
-
+    
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -255,7 +315,13 @@ def main(args):
 
         print("LoRA configuration applied successfully.", flush=True)
 
-    model.print_trainable_parameters()
+    if hasattr(model, 'print_trainable_parameters'):
+        model.print_trainable_parameters()
+    else:
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
 
     training_args = TrainingArguments(
         output_dir=args.trainer_output_dir,

@@ -35,6 +35,11 @@ class MultiheadStopDecisionDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.target_label = target_label
+
+        self.has_chat_template = (
+            hasattr(self.tokenizer, 'chat_template') and 
+            self.tokenizer.chat_template is not None
+        )
         self.use_docs_only = use_docs_only
 
         with open(filepath, "r", encoding="utf-8") as f:
@@ -73,20 +78,70 @@ class MultiheadStopDecisionDataset(Dataset):
         label1 = trace[self.target_label]
         label2 = trace[f"max_cont_{self.target_label}"]
 
-        encoding = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=True,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt",
-            return_dict=True
-        )
+        if self.has_chat_template: #Decoder
+            encoding = self.tokenizer.apply_chat_template(
+                chat,
+                tokenize=True,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt",
+                return_dict=True
+            )
+        else: #Encoder
+            text = self._convert_chat_to_text(chat)
+
+            encoding = self.tokenizer(
+                text,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+                return_tensors="pt"
+            )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
         encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
 
         return encoding
+
+    def _convert_chat_to_text(self, chat): # Encoder-only
+        content = ""
+        for message in chat:
+            if message['role'] == 'user':
+                content = message['content']
+                break
+
+        lines = content.split('\n')
+        question = ""
+        for line in lines:
+            if line.startswith("Main question: "):
+                question = line[len("Main question: "):]
+                break
+
+        sep_token = self.tokenizer.sep_token if self.tokenizer.sep_token else "[SEP]"
+
+        if self.use_docs_only: # docs only
+            documents = []
+            for line in lines:
+                if line.startswith("Document: "):
+                    documents.append(line[len("Document: "):])
+
+            text_parts = [question] + documents
+            return sep_token.join(text_parts)
+
+        else: # full trace
+            text_parts = [question]
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith("Follow up: "):
+                    text_parts.append(line)
+                elif line.startswith("Document: "):
+                    text_parts.append(line)
+                elif line.startswith("Intermediate answer: "):
+                    text_parts.append(line)
+
+            return sep_token.join(text_parts)
 
 
 class MultiheadConfig(PretrainedConfig):
@@ -114,6 +169,7 @@ class MultiheadConfig(PretrainedConfig):
 class MultiheadModel(PreTrainedModel):
     config_class = MultiheadConfig
     base_model_prefix = "multihead"
+    supports_gradient_checkpointing = True
 
     def __init__(self, config, encoder_kwargs={}, dtype=None, inference_mode=False):
         super().__init__(config)
@@ -122,11 +178,18 @@ class MultiheadModel(PreTrainedModel):
         if hasattr(config, "encoder_quantization_config") and config.encoder_quantization_config is not None:
             encoder_quantization_config = BitsAndBytesConfig(**config.encoder_quantization_config)
 
+        model_kwargs = {
+            "quantization_config": encoder_quantization_config,
+            "torch_dtype": dtype,
+            **encoder_kwargs,
+        }
+
+        if "deberta" not in config.encoder_name_or_path.lower():
+            model_kwargs["use_cache"] = False
+
         self.encoder = AutoModel.from_pretrained(
             config.encoder_name_or_path,
-            quantization_config=encoder_quantization_config,
-            torch_dtype=dtype,
-            **encoder_kwargs,
+            **model_kwargs
         )
 
         if hasattr(config, "encoder_lora_config") and config.encoder_lora_config is not None:
@@ -220,7 +283,7 @@ class MultiheadModel(PreTrainedModel):
         print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.2f}%")
         return trainable_params, all_params
 
-    def forward(self, input_ids=None, attention_mask=None, **kwargs):
+    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
         outputs = self.encoder(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -261,6 +324,10 @@ class MultiheadModel(PreTrainedModel):
         self.classifier_head1.to(*args, **kwargs)
         self.classifier_head2.to(*args, **kwargs)
         return self
+
+    def _set_gradient_checkpointing(self, module, value=False):
+        if hasattr(self.encoder, "gradient_checkpointing"):
+            self.encoder.gradient_checkpointing = value
 
 
 class MultiheadTrainer(Trainer):
@@ -413,7 +480,6 @@ def main(args):
         config,
         encoder_kwargs={
             "device_map": {"": local_rank},
-            "use_cache": False,
             "max_position_embeddings": args.max_length,
         },
         inference_mode=False,
