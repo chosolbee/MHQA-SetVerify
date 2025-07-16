@@ -137,6 +137,7 @@ class MultiheadConfig(PretrainedConfig):
 class MultiheadModel(PreTrainedModel):
     config_class = MultiheadConfig
     base_model_prefix = "multihead"
+    supports_gradient_checkpointing = True
 
     def __init__(self, config, encoder_kwargs={}, dtype=None, inference_mode=False):
         super().__init__(config)
@@ -250,7 +251,7 @@ class MultiheadModel(PreTrainedModel):
         print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.2f}%")
         return trainable_params, all_params
 
-    def forward(self, input_ids=None, attention_mask=None, **kwargs):
+    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
         outputs = self.encoder(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -291,6 +292,10 @@ class MultiheadModel(PreTrainedModel):
         self.classifier_head1.to(*args, **kwargs)
         self.classifier_head2.to(*args, **kwargs)
         return self
+
+    def _set_gradient_checkpointing(self, module, value=False):
+        if hasattr(self.encoder, "gradient_checkpointing"):
+            self.encoder.gradient_checkpointing = value
 
 
 class MultiheadTrainer(Trainer):
