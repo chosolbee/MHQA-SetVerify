@@ -87,7 +87,7 @@ class StopDecisionDataset(Dataset):
             )
         else: # Encoder
             text = self._convert_chat_to_text(chat)
-
+            
             encoding = self.tokenizer(
                 text,
                 truncation=True,
@@ -132,11 +132,11 @@ class StopDecisionDataset(Dataset):
             for line in lines:
                 line = line.strip()
                 if line.startswith("Follow up: "):
-                    text_parts.append(f"follow up:{line[len('Follow up: '):]}")
+                    text_parts.append(line)
                 elif line.startswith("Document: "):
-                    text_parts.append(line[len("Document: "):])
+                    text_parts.append(line)
                 elif line.startswith("Intermediate answer: "):
-                    text_parts.append(f"intermediate answer:{line[len('Intermediate answer: '):]}")
+                    text_parts.append(line)
 
             return sep_token.join(text_parts)
         
