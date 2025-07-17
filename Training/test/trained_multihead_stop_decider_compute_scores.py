@@ -32,6 +32,44 @@ def extract_documents_only(trace_text):
             documents.append(line)
     return '\n'.join(documents)
 
+def convert_chat_to_text(chat, tokenizer, use_docs_only=False):
+    content = ""
+    for message in chat:
+        if message['role'] == 'user':
+            content = message['content']
+            break
+    
+    lines = content.split('\n')
+    question = ""
+    for line in lines:
+        if line.startswith("Main question: "):
+            question = line[len("Main question: "):]
+            break
+
+    sep_token = tokenizer.sep_token if tokenizer.sep_token else "[SEP]"
+    
+    if use_docs_only:  # docs only
+        documents = []
+        for line in lines:
+            if line.startswith("Document: "):
+                documents.append(line[len("Document: "):])
+        
+        text_parts = [question] + documents
+        return sep_token.join(text_parts)
+    else:  # full trace
+        text_parts = [question]
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith("Follow up: "):
+                text_parts.append(line)
+            elif line.startswith("Document: "):
+                text_parts.append(line)
+            elif line.startswith("Intermediate answer: "):
+                text_parts.append(line)
+
+        return sep_token.join(text_parts)
+
 if __name__ == "__main__":
     args = parse_args()
 
@@ -41,8 +79,8 @@ if __name__ == "__main__":
         args.checkpoint_path,
         encoder_kwargs={
             "device_map": "auto",
-            "use_cache": False,
             "max_position_embeddings": args.max_length,
+            **({} if "deberta" in args.model_id.lower() else {"use_cache": False})
         },
         dtype=torch.bfloat16 if args.bf16 else torch.float32,
         inference_mode=True,
@@ -50,7 +88,8 @@ if __name__ == "__main__":
 
     model.eval()
 
-    tokenizer = AutoTokenizer.from_pretrained(args.checkpoint_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
+    
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
@@ -70,15 +109,30 @@ if __name__ == "__main__":
         else:
             batch_prompts = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces]
 
-        inputs = tokenizer.apply_chat_template(
-            batch_prompts,
-            tokenize=True,
-            truncation=True,
-            padding="longest",
-            max_length=4096,
-            return_tensors="pt",
-            return_dict=True,
-        ).to(model.device)
+        has_chat_template = (
+            hasattr(tokenizer, 'chat_template') and 
+            tokenizer.chat_template is not None
+        )
+
+        if has_chat_template:  # Decoder
+            inputs = tokenizer.apply_chat_template(
+                batch_prompts,
+                tokenize=True,
+                truncation=True,
+                padding="longest",
+                max_length=args.max_length,
+                return_tensors="pt",
+                return_dict=True,
+            ).to(model.device)
+        else:  # Encoder
+            batch_texts = [convert_chat_to_text(prompt, tokenizer, args.use_docs_only) for prompt in batch_prompts]
+            inputs = tokenizer(
+                batch_texts,
+                truncation=True,
+                padding="longest",
+                max_length=args.max_length,
+                return_tensors="pt"
+            ).to(model.device)
 
         with torch.no_grad():
             outputs = model(**inputs)
