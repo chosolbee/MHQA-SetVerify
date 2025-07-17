@@ -11,6 +11,7 @@ from transformers import (
     set_seed,
 )
 from peft import PeftModelForSequenceClassification
+from ..utils import extract_documents_only, convert_chat_to_text
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
 
@@ -31,13 +32,6 @@ def parse_args():
 
     return parser.parse_args()
 
-def extract_documents_only(trace_text):
-    documents = []
-    lines = trace_text.split('\n')
-    for line in lines:
-        if line.startswith("Document: "):
-            documents.append(line)
-    return '\n'.join(documents)
 
 if __name__ == "__main__":
     args = parse_args()
@@ -53,13 +47,19 @@ if __name__ == "__main__":
             bnb_4bit_compute_dtype=torch.bfloat16 if args.bf16 else torch.float32,
         )
 
+    model_kwargs = {
+        "quantization_config": nf4_config,
+        "device_map": "auto",
+        "num_labels": 1,
+        "max_position_embeddings": args.max_length,
+    }
+
+    if "deberta" not in args.model_id.lower():
+        model_kwargs["use_cache"] = False
+
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_id if args.use_lora else args.checkpoint_path,
-        quantization_config=nf4_config,
-        use_cache=False,
-        device_map="auto",
-        num_labels=1,
-        max_position_embeddings=args.max_length,
+        **model_kwargs
     )
 
     if args.use_lora:
@@ -68,8 +68,6 @@ if __name__ == "__main__":
             args.checkpoint_path,
             device_map="auto"
         )
-
-    print(f"args.checkpoint_path: {args.checkpoint_path}")
 
     model.eval()
 
@@ -92,16 +90,31 @@ if __name__ == "__main__":
             batch_prompts = [gen_final_answer_docs_only_prompt(trace["question"], extract_documents_only(trace["trace"])) for trace in batch_traces]
         else:
             batch_prompts = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces]
-    
-        inputs = tokenizer.apply_chat_template(
-            batch_prompts,
-            tokenize=True,
-            truncation=True,
-            padding="longest",
-            max_length=4096,
-            return_tensors="pt",
-            return_dict=True,
-        ).to(model.device)
+
+        has_chat_template = (
+            hasattr(tokenizer, 'chat_template') and 
+            tokenizer.chat_template is not None
+        )
+
+        if has_chat_template:  # Decoder
+            inputs = tokenizer.apply_chat_template(
+                batch_prompts,
+                tokenize=True,
+                truncation=True,
+                padding="longest",
+                max_length=args.max_length,
+                return_tensors="pt",
+                return_dict=True,
+            ).to(model.device)
+        else:  # Encoder
+            batch_texts = [convert_chat_to_text(prompt, tokenizer, args.use_docs_only) for prompt in batch_prompts]
+            inputs = tokenizer(
+                batch_texts,
+                truncation=True,
+                padding="longest",
+                max_length=args.max_length,
+                return_tensors="pt"
+            ).to(model.device)
 
         with torch.no_grad():
             logits = model(**inputs).logits.squeeze(-1)

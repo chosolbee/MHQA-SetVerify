@@ -25,6 +25,7 @@ from transformers import (
 from safetensors.torch import load_file
 from peft import LoraConfig, TaskType, PeftModel, prepare_model_for_kbit_training
 import wandb
+from .utils import extract_documents_only, convert_chat_to_text
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from config import WANDB_ENTITY
 from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
@@ -54,14 +55,6 @@ class MultiheadStopDecisionDataset(Dataset):
         self.data = pos_samples[:min_len] + neu_samples[:min_len] + neg_samples[:min_len]
         np.random.shuffle(self.data)
 
-    def extract_documents_only(self, trace_text):
-        documents = []
-        lines = trace_text.split('\n')
-        for line in lines:
-            if line.startswith("Document: "):
-                documents.append(line)
-        return '\n'.join(documents)
-
     def __len__(self):
         return len(self.data)
 
@@ -69,7 +62,7 @@ class MultiheadStopDecisionDataset(Dataset):
         trace = self.data[idx]
 
         if self.use_docs_only:
-            filtered_trace = self.extract_documents_only(trace["trace"])
+            filtered_trace = extract_documents_only(trace["trace"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
         else:
             filtered_trace = trace["trace"]
@@ -89,7 +82,7 @@ class MultiheadStopDecisionDataset(Dataset):
                 return_dict=True
             )
         else: #Encoder
-            text = self._convert_chat_to_text(chat)
+            text = convert_chat_to_text(chat, self.tokenizer, self.use_docs_only)
 
             encoding = self.tokenizer(
                 text,
@@ -104,53 +97,14 @@ class MultiheadStopDecisionDataset(Dataset):
 
         return encoding
 
-    def _convert_chat_to_text(self, chat): # Encoder-only
-        content = ""
-        for message in chat:
-            if message['role'] == 'user':
-                content = message['content']
-                break
-
-        lines = content.split('\n')
-        question = ""
-        for line in lines:
-            if line.startswith("Main question: "):
-                question = line[len("Main question: "):]
-                break
-
-        sep_token = self.tokenizer.sep_token if self.tokenizer.sep_token else "[SEP]"
-
-        if self.use_docs_only: # docs only
-            documents = []
-            for line in lines:
-                if line.startswith("Document: "):
-                    documents.append(line[len("Document: "):])
-
-            text_parts = [question] + documents
-            return sep_token.join(text_parts)
-
-        else: # full trace
-            text_parts = [question]
-            
-            for line in lines:
-                line = line.strip()
-                if line.startswith("Follow up: "):
-                    text_parts.append(line)
-                elif line.startswith("Document: "):
-                    text_parts.append(line)
-                elif line.startswith("Intermediate answer: "):
-                    text_parts.append(line)
-
-            return sep_token.join(text_parts)
-
 
 class MultiheadConfig(PretrainedConfig):
     model_type = "multihead"
 
     def __init__(
         self,
-        encoder_name_or_path: str,
-        encoder_arch: str,
+        encoder_name_or_path: str = None,
+        encoder_arch: str = None,
         encoder_quantization_config: dict = None,
         encoder_lora_config: dict = None,
         dropout_prob: float = 0.1,
@@ -235,7 +189,7 @@ class MultiheadModel(PreTrainedModel):
         state_dict_encoder = {
             k.split(".", 1)[-1]: v
             for k, v in state_dict.items()
-            if k.startswith("encoder.") and k.endswith(".weight")
+            if k.startswith("encoder.") and (k.endswith(".weight") or k.endswith(".bias"))
         }
         missing_encoder, unexpected_encoder = self.encoder.load_state_dict(
             state_dict_encoder, strict=strict, assign=assign

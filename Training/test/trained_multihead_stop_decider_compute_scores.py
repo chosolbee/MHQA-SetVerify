@@ -6,6 +6,7 @@ from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer, set_seed
 from ..multihead_stop_decider_train import MultiheadModel
+from ..utils import extract_documents_only, convert_chat_to_text
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
 
@@ -15,7 +16,6 @@ def parse_args():
     parser.add_argument("--input-path", type=str, required=True, help="Path to the input JSONL file")
     parser.add_argument("--output-path", type=str, required=True, help="Path to the output JSONL file")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for processing")
-    parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="Model ID for computing scores")
     parser.add_argument("--max-length", type=int, default=4096, help="Max Length of Inputs")
     parser.add_argument("--bf16", action="store_true", help="Use bf16 precision for model")
     parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the checkpoint of the multihead classifier")
@@ -24,13 +24,6 @@ def parse_args():
 
     return parser.parse_args()
 
-def extract_documents_only(trace_text):
-    documents = []
-    lines = trace_text.split('\n')
-    for line in lines:
-        if line.startswith("Document: "):
-            documents.append(line)
-    return '\n'.join(documents)
 
 if __name__ == "__main__":
     args = parse_args()
@@ -41,7 +34,6 @@ if __name__ == "__main__":
         args.checkpoint_path,
         encoder_kwargs={
             "device_map": "auto",
-            "use_cache": False,
             "max_position_embeddings": args.max_length,
         },
         dtype=torch.bfloat16 if args.bf16 else torch.float32,
@@ -50,7 +42,8 @@ if __name__ == "__main__":
 
     model.eval()
 
-    tokenizer = AutoTokenizer.from_pretrained(args.checkpoint_path)
+    tokenizer = AutoTokenizer.from_pretrained(model.config.encoder_name_or_path)
+
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
@@ -70,15 +63,30 @@ if __name__ == "__main__":
         else:
             batch_prompts = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces]
 
-        inputs = tokenizer.apply_chat_template(
-            batch_prompts,
-            tokenize=True,
-            truncation=True,
-            padding="longest",
-            max_length=4096,
-            return_tensors="pt",
-            return_dict=True,
-        ).to(model.device)
+        has_chat_template = (
+            hasattr(tokenizer, 'chat_template') and 
+            tokenizer.chat_template is not None
+        )
+
+        if has_chat_template:  # Decoder
+            inputs = tokenizer.apply_chat_template(
+                batch_prompts,
+                tokenize=True,
+                truncation=True,
+                padding="longest",
+                max_length=args.max_length,
+                return_tensors="pt",
+                return_dict=True,
+            ).to(model.device)
+        else:  # Encoder
+            batch_texts = [convert_chat_to_text(prompt, tokenizer, args.use_docs_only) for prompt in batch_prompts]
+            inputs = tokenizer(
+                batch_texts,
+                truncation=True,
+                padding="longest",
+                max_length=args.max_length,
+                return_tensors="pt"
+            ).to(model.device)
 
         with torch.no_grad():
             outputs = model(**inputs)
