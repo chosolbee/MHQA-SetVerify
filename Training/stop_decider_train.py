@@ -22,6 +22,7 @@ from transformers import (
 )
 from peft import LoraConfig, TaskType, PeftModelForSequenceClassification, prepare_model_for_kbit_training
 import wandb
+from .utils import extract_documents_only, convert_chat_to_text
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from config import WANDB_ENTITY
 from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
@@ -51,14 +52,6 @@ class StopDecisionDataset(Dataset):
         self.data = pos_samples[:min_len] + neg_samples[:min_len] + neu_samples[:min_len]
         np.random.shuffle(self.data)
 
-    def extract_documents_only(self, trace_text):
-        documents = []
-        lines = trace_text.split('\n')
-        for line in lines:
-            if line.startswith("Document: "):
-                documents.append(line)
-        return '\n'.join(documents)
-
     def __len__(self):
         return len(self.data)
 
@@ -66,7 +59,7 @@ class StopDecisionDataset(Dataset):
         trace = self.data[idx]
 
         if self.use_docs_only:
-            filtered_trace = self.extract_documents_only(trace["trace"])
+            filtered_trace = extract_documents_only(trace["trace"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
         else:
             filtered_trace = trace["trace"]
@@ -86,8 +79,8 @@ class StopDecisionDataset(Dataset):
                 return_dict=True
             )
         else: # Encoder
-            text = self._convert_chat_to_text(chat)
-            
+            text = convert_chat_to_text(chat, self.tokenizer, self.use_docs_only)
+
             encoding = self.tokenizer(
                 text,
                 truncation=True,
@@ -101,45 +94,7 @@ class StopDecisionDataset(Dataset):
 
         return encoding
 
-    def _convert_chat_to_text(self, chat): # Encoder-only
-        content = ""
-        for message in chat:
-            if message['role'] == 'user':
-                content = message['content']
-                break
-        
-        lines = content.split('\n')
-        question = ""
-        for line in lines:
-            if line.startswith("Main question: "):
-                question = line[len("Main question: "):]
-                break
 
-        sep_token = self.tokenizer.sep_token if self.tokenizer.sep_token else "[SEP]"
-        
-        if self.use_docs_only: # docs only
-            documents = []
-            for line in lines:
-                if line.startswith("Document: "):
-                    documents.append(line[len("Document: "):])
-            
-            text_parts = [question] + documents
-            return sep_token.join(text_parts)
-
-        else: # full trace
-            text_parts = [question]
-            
-            for line in lines:
-                line = line.strip()
-                if line.startswith("Follow up: "):
-                    text_parts.append(line)
-                elif line.startswith("Document: "):
-                    text_parts.append(line)
-                elif line.startswith("Intermediate answer: "):
-                    text_parts.append(line)
-
-            return sep_token.join(text_parts)
-        
 def compute_loss_func(target_type="abs_bce"):
     def func(outputs, labels, num_items_in_batch=None):
         logits = outputs.logits.squeeze(-1)
