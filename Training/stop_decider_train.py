@@ -230,21 +230,14 @@ def main(args):
             bnb_4bit_compute_dtype=torch.bfloat16 if args.bf16 else torch.float32,
         )
 
-    model_kwargs = {
-        "quantization_config": nf4_config,
-        "device_map": {"": local_rank},
-        "num_labels": 1,
-        "max_position_embeddings" : args.max_length,
-    }
-
-    if "deberta" not in args.model_id.lower():
-        model_kwargs["use_cache"] = False
-
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_id,
-        **model_kwargs
+        quantization_config=nf4_config,
+        device_map={"": local_rank},
+        num_labels=1,
+        max_position_embeddings=args.max_length,
     )
-    
+
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token

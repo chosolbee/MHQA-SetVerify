@@ -132,18 +132,11 @@ class MultiheadModel(PreTrainedModel):
         if hasattr(config, "encoder_quantization_config") and config.encoder_quantization_config is not None:
             encoder_quantization_config = BitsAndBytesConfig(**config.encoder_quantization_config)
 
-        model_kwargs = {
-            "quantization_config": encoder_quantization_config,
-            "torch_dtype": dtype,
-            **encoder_kwargs,
-        }
-
-        if "deberta" not in config.encoder_name_or_path.lower():
-            model_kwargs["use_cache"] = False
-
         self.encoder = AutoModel.from_pretrained(
             config.encoder_name_or_path,
-            **model_kwargs
+            quantization_config=encoder_quantization_config,
+            torch_dtype=dtype,
+            **encoder_kwargs,
         )
 
         if hasattr(config, "encoder_lora_config") and config.encoder_lora_config is not None:
@@ -278,10 +271,12 @@ class MultiheadModel(PreTrainedModel):
         self.classifier_head1.to(*args, **kwargs)
         self.classifier_head2.to(*args, **kwargs)
         return self
+    
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        self.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if hasattr(self.encoder, "gradient_checkpointing"):
-            self.encoder.gradient_checkpointing = value
+    def gradient_checkpointing_disable(self):
+        self.encoder.gradient_checkpointing_disable()
 
 
 class MultiheadTrainer(Trainer):
