@@ -153,10 +153,19 @@ class MultiheadModel(PreTrainedModel):
             encoder_lora_config = LoraConfig(inference_mode=inference_mode, **config.encoder_lora_config)
             self.encoder = PeftModel(self.encoder, encoder_lora_config)
 
-        self.dense = nn.Linear(self.encoder.config.hidden_size, self.encoder.config.hidden_size, device=self.encoder.device, dtype=dtype)
-        self.dropout = nn.Dropout(config.dropout_prob)
-        self.classifier_head1 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
-        self.classifier_head2 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
+        self.classifier1 = nn.Sequential(
+            nn.Dropout(config.dropout_prob),
+            nn.Linear(self.encoder.config.hidden_size, self.encoder.config.hidden_size, device=self.encoder.device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype),
+        )
+
+        self.classifier2 = nn.Sequential(
+            nn.Dropout(config.dropout_prob),
+            nn.Linear(self.encoder.config.hidden_size, self.encoder.config.hidden_size, device=self.encoder.device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype),
+        )
 
         self.post_init()
 
@@ -188,35 +197,26 @@ class MultiheadModel(PreTrainedModel):
             state_dict_encoder, strict=strict, assign=assign
         )
 
-        state_dict_dense = {
+        state_dict_classifier1 = {
             k.split(".", 1)[-1]: v
             for k, v in state_dict.items()
-            if k.startswith("dense.")
+            if k.startswith("classifier1.")
         }
-        missing_dense, unexpected_dense = self.dense.load_state_dict(
-            state_dict_dense, strict=strict, assign=assign
+        missing_classifier1, unexpected_classifier1 = self.classifier1.load_state_dict(
+            state_dict_classifier1, strict=strict, assign=assign
         )
 
-        state_dict_classifier_head1 = {
+        state_dict_classifier2 = {
             k.split(".", 1)[-1]: v
             for k, v in state_dict.items()
-            if k.startswith("classifier_head1.")
+            if k.startswith("classifier2.")
         }
-        missing_classifier_head1, unexpected_classifier_head1 = self.classifier_head1.load_state_dict(
-            state_dict_classifier_head1, strict=strict, assign=assign
+        missing_classifier2, unexpected_classifier2 = self.classifier2.load_state_dict(
+            state_dict_classifier2, strict=strict, assign=assign
         )
 
-        state_dict_classifier_head2 = {
-            k.split(".", 1)[-1]: v
-            for k, v in state_dict.items()
-            if k.startswith("classifier_head2.")
-        }
-        missing_classifier_head2, unexpected_classifier_head2 = self.classifier_head2.load_state_dict(
-            state_dict_classifier_head2, strict=strict, assign=assign
-        )
-
-        return missing_encoder + missing_dense + missing_classifier_head1 + missing_classifier_head2, \
-               unexpected_encoder + unexpected_dense + unexpected_classifier_head1 + unexpected_classifier_head2
+        return missing_encoder + missing_classifier1 + missing_classifier2, \
+               unexpected_encoder + unexpected_classifier1 + unexpected_classifier2
 
     def print_trainable_parameters(self):
         trainable_params = 0
@@ -254,10 +254,8 @@ class MultiheadModel(PreTrainedModel):
         else:
             raise ValueError(f"Unsupported encoder architecture: {self.config.encoder_arch}")
 
-        pooled_output = self.dense(pooled_output)
-        pooled_output = self.dropout(pooled_output)
-        preds_head1 = self.classifier_head1(pooled_output)
-        preds_head2 = self.classifier_head2(pooled_output)
+        preds_head1 = self.classifier1(pooled_output)
+        preds_head2 = self.classifier2(pooled_output)
 
         return {
             "preds_head1": preds_head1,
@@ -266,12 +264,10 @@ class MultiheadModel(PreTrainedModel):
 
     def to(self, *args, **kwargs):
         self.encoder.to(*args, **kwargs)
-        self.dense.to(*args, **kwargs)
-        self.dropout.to(*args, **kwargs)
-        self.classifier_head1.to(*args, **kwargs)
-        self.classifier_head2.to(*args, **kwargs)
+        self.classifier1.to(*args, **kwargs)
+        self.classifier2.to(*args, **kwargs)
         return self
-    
+
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
         self.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
 
