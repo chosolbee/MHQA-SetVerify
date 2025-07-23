@@ -430,6 +430,7 @@ def main(args):
         save_total_limit=args.save_total_limit,
         logging_steps=args.logging_steps,
         load_best_model_at_end=True,
+        label_names=["pos_input_ids", "pos_attention_mask", "neg_input_ids", "neg_attention_mask"] if args.pairwise else ["labels"],
         metric_for_best_model="eval_loss",
         deepspeed=args.deepspeed_config,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
