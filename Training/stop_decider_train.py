@@ -144,7 +144,7 @@ class StopDecisionTrainer(Trainer):
         pos_logits = pos_outputs.logits.squeeze(-1)
         neg_logits = neg_outputs.logits.squeeze(-1)
 
-        if self.target_type == "ranksvm":
+        if self.target_type == "margin":
             targets = torch.ones_like(pos_logits)
             loss = nn.MarginRankingLoss(margin=1.0, reduction="sum")(pos_logits, neg_logits, targets)
         elif self.target_type == "ranknet":
@@ -161,7 +161,7 @@ class StopDecisionTrainer(Trainer):
 
         return loss
 
-    def compute_loss_func_non_pairwise(self, outputs, labels, num_items_in_batch=None):
+    def compute_loss_func_pointwise(self, outputs, labels, num_items_in_batch=None):
         logits = outputs.logits.squeeze(-1)
 
         if self.target_type == "abs_bce":
@@ -212,7 +212,7 @@ class StopDecisionTrainer(Trainer):
         else:
             outputs = model(**inputs)
             labels = inputs["labels"]
-            loss = self.compute_loss_func_non_pairwise(outputs, labels, num_items_in_batch)
+            loss = self.compute_loss_func_pointwise(outputs, labels, num_items_in_batch)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -258,7 +258,7 @@ def collate_fn(pairwise=False):
             "neg_attention_mask": neg_attention_mask,
         }
 
-    def func_non_pairwise(batch):
+    def func_pointwise(batch):
         input_ids = torch.stack([item["input_ids"] for item in batch])
         attention_mask = torch.stack([item["attention_mask"] for item in batch])
         labels = torch.stack([item["labels"] for item in batch])
@@ -269,7 +269,7 @@ def collate_fn(pairwise=False):
             "labels": labels,
         }
 
-    return func_pairwise if pairwise else func_non_pairwise
+    return func_pairwise if pairwise else func_pointwise
 
 
 def compute_metrics(pairwise=False, decision_threshold=0.8):
@@ -336,7 +336,7 @@ def parse_args():
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
     parser.add_argument("--decision-threshold", type=float, default=0.8, help="Threshold for stop decision")
-    parser.add_argument("--target-type", type=str, default="abs_bce", choices=["abs_bce", "abs_mse", "soft_diff", "hard_diff", "ranksvm", "ranknet"], help="Target Type for Training")
+    parser.add_argument("--target-type", type=str, default="abs_bce", choices=["abs_bce", "abs_mse", "soft_diff", "hard_diff", "margin", "ranknet"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
