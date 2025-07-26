@@ -1,100 +1,102 @@
 import json
-import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import argparse
 import os
 
-def analyze_and_split_data(file_path, train_ratio=0.8, eval_ratio=0.1, test_ratio=0.1, random_state=42, output_dir=None):
+
+def analyze_and_split_data(file_path, train_ratio=0.8, eval_ratio=0.1, test_ratio=0.1, random_state=42, output_dir=None, target_label='f1'):
     assert abs(train_ratio + eval_ratio + test_ratio - 1.0) < 1e-6, "The sum of ratios must equal 1."
-    
+
     data_records = []
-    
+
     with open(file_path, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            
+
             try:
                 data = json.loads(line)
                 data_records.append(data)
             except json.JSONDecodeError:
                 continue
-    
+
     df = pd.DataFrame(data_records)
-    
-    question_avg_prob = df.groupby('question_id')['prob'].mean().reset_index()
-    question_avg_prob.columns = ['question_id', 'avg_prob']
-    
+
+    question_avg_label = df.groupby('question_id')[target_label].mean().reset_index()
+    question_avg_label.columns = ['question_id', f'avg_{target_label}']
+
     train_questions, temp_questions = train_test_split(
-        question_avg_prob['question_id'], 
+        question_avg_label['question_id'],
         test_size=(eval_ratio + test_ratio),
-        stratify=pd.cut(question_avg_prob['avg_prob'], bins=5, labels=False),
+        stratify=pd.cut(question_avg_label[f'avg_{target_label}'], bins=5, labels=False),
         random_state=random_state
     )
-    
-    temp_question_avg_prob = question_avg_prob[question_avg_prob['question_id'].isin(temp_questions)]
+
+    temp_question_avg_label = question_avg_label[question_avg_label['question_id'].isin(temp_questions)]
     eval_ratio_adjusted = eval_ratio / (eval_ratio + test_ratio)
-    
+
     try:
         eval_questions, test_questions = train_test_split(
-            temp_question_avg_prob['question_id'],
+            temp_question_avg_label['question_id'],
             test_size=(1 - eval_ratio_adjusted),
-            stratify=pd.cut(temp_question_avg_prob['avg_prob'], bins=3, labels=False),
+            stratify=pd.cut(temp_question_avg_label[f'avg_{target_label}'], bins=3, labels=False),
             random_state=random_state
         )
     except ValueError:
         eval_questions, test_questions = train_test_split(
-            temp_question_avg_prob['question_id'],
+            temp_question_avg_label['question_id'],
             test_size=(1 - eval_ratio_adjusted),
             random_state=random_state
         )
-    
+
     train_df = df[df['question_id'].isin(train_questions)]
     eval_df = df[df['question_id'].isin(eval_questions)]
     test_df = df[df['question_id'].isin(test_questions)]
-    
-    train_avg_prob = train_df['prob'].mean()
-    eval_avg_prob = eval_df['prob'].mean()
-    test_avg_prob = test_df['prob'].mean()
-    
-    print(f"Train set: {len(train_df)} samples ({len(train_df)/len(df)*100:.1f}%) - avg prob: {train_avg_prob:.6f}")
-    print(f"Eval set: {len(eval_df)} samples ({len(eval_df)/len(df)*100:.1f}%) - avg prob: {eval_avg_prob:.6f}")
-    print(f"Test set: {len(test_df)} samples ({len(test_df)/len(df)*100:.1f}%) - avg prob: {test_avg_prob:.6f}")
-    
+
+    train_avg_label = train_df[target_label].mean()
+    eval_avg_label = eval_df[target_label].mean()
+    test_avg_label = test_df[target_label].mean()
+
+    print(f"Train set: {len(train_df)} samples ({len(train_df)/len(df)*100:.1f}%) - avg {target_label}: {train_avg_label:.6f}")
+    print(f"Eval set: {len(eval_df)} samples ({len(eval_df)/len(df)*100:.1f}%) - avg {target_label}: {eval_avg_label:.6f}")
+    print(f"Test set: {len(test_df)} samples ({len(test_df)/len(df)*100:.1f}%) - avg {target_label}: {test_avg_label:.6f}")
+
     output_files = save_splits(train_df, eval_df, test_df, file_path, output_dir)
-    
-    return train_df, eval_df, test_df, output_files
+
+    return output_files
+
 
 def save_splits(train_df, eval_df, test_df, original_file_path, output_dir=None):
     filename = os.path.basename(original_file_path).replace('.jsonl', '')
-    
+
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
         output_prefix = os.path.join(output_dir, filename)
     else:
         output_prefix = os.path.join(os.path.dirname(original_file_path), filename)
-    
+
     splits = {
         'train': train_df,
         'eval': eval_df,
         'test': test_df
     }
-    
+
     output_files = []
-    
+
     for split_name, df in splits.items():
         output_file = f"{output_prefix}_{split_name}.jsonl"
-        
+
         with open(output_file, 'w', encoding='utf-8') as f:
             for _, row in df.iterrows():
                 json.dump(row.to_dict(), f, ensure_ascii=False)
                 f.write('\n')
-        
+
         output_files.append(output_file)
-    
+
     return output_files
+
 
 def main():
     parser = argparse.ArgumentParser(description='Split JSONL data by question_id based on average prob')
@@ -104,29 +106,32 @@ def main():
     parser.add_argument('--eval-ratio', type=float, default=0.1, help='Evaluation data ratio (default: 0.1)')
     parser.add_argument('--test-ratio', type=float, default=0.1, help='Test data ratio (default: 0.1)')
     parser.add_argument('--random-state', type=int, default=42, help='Random seed (default: 42)')
-    
+    parser.add_argument('--target-label', type=str, default='f1', choices=['prob', 'em', 'f1'], help='Target label for splitting')
+
     args = parser.parse_args()
-    
+
     if not os.path.exists(args.input_path):
         print(f"Error: File '{args.input_path}' not found.")
         return
-    
+
     if abs(args.train_ratio + args.eval_ratio + args.test_ratio - 1.0) >= 1e-6:
         print("Error: The sum of train_ratio, eval_ratio, and test_ratio must equal 1.0")
         return
-    
-    train_df, eval_df, test_df, output_files = analyze_and_split_data(
+
+    output_files = analyze_and_split_data(
         file_path=args.input_path,
         train_ratio=args.train_ratio,
         eval_ratio=args.eval_ratio,
         test_ratio=args.test_ratio,
         random_state=args.random_state,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        target_label=args.target_label,
     )
-    
+
     print("Generated files:")
     for file in output_files:
         print(f"- {file}")
+
 
 if __name__ == "__main__":
     main()
