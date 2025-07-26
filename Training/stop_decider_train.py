@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import argparse
+import itertools
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
@@ -29,35 +30,56 @@ from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final
 
 
 class StopDecisionDataset(Dataset):
-    def __init__(self, filepath, tokenizer, max_length=8192, target_label="prob", use_docs_only=False):
+    def __init__(
+        self,
+        filepath,
+        tokenizer,
+        max_items=None,
+        max_length=4096,
+        target_label="prob",
+        use_docs_only=False,
+        pairwise=False,
+        pairwise_threshold=0.3
+    ):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.target_label = target_label
 
         self.has_chat_template = (
-            hasattr(self.tokenizer, 'chat_template') and 
+            hasattr(self.tokenizer, 'chat_template') and
             self.tokenizer.chat_template is not None
         )
         self.use_docs_only = use_docs_only
+        self.pairwise = pairwise
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
             self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
-            np.random.shuffle(self.data)
 
-        pos_samples = [trace for trace in self.data if trace[target_label] > trace[f"max_cont_{target_label}"]]
-        neu_samples = [trace for trace in self.data if trace[target_label] == trace[f"max_cont_{target_label}"]]
-        neg_samples = [trace for trace in self.data if trace[target_label] < trace[f"max_cont_{target_label}"]]
-        min_len = min(len(pos_samples), len(neg_samples), len(neu_samples))
-        self.data = pos_samples[:min_len] + neg_samples[:min_len] + neu_samples[:min_len]
-        np.random.shuffle(self.data)
+        if pairwise:
+            pos_samples = [trace for trace in self.data if trace[target_label] - trace[f"max_cont_{target_label}"] > pairwise_threshold]
+            neg_samples = [trace for trace in self.data if trace[f"max_cont_{target_label}"] - trace[target_label] > pairwise_threshold]
+            if max_items is None:
+                self.data = list(itertools.product(pos_samples, neg_samples))
+            else:
+                seen_indices = set()
+                self.data = []
+                while len(self.data) < max_items:
+                    pos_idx = np.random.choice(len(pos_samples))
+                    neg_idx = np.random.choice(len(neg_samples))
+                    if (pos_idx, neg_idx) not in seen_indices:
+                        seen_indices.add((pos_idx, neg_idx))
+                        self.data.append((pos_samples[pos_idx], neg_samples[neg_idx]))
+        else:
+            self.data = [trace for trace in self.data if not (trace[target_label] == 0.0 and trace[f"max_cont_{target_label}"] == 0.0)]
+            np.random.shuffle(self.data)
+            if max_items is not None:
+                self.data = self.data[:max_items]
 
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx):
-        trace = self.data[idx]
-
+    def _trace_to_encoding(self, trace, add_labels=True, prefix=None):
         if self.use_docs_only:
             filtered_trace = extract_documents_only(trace["trace"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
@@ -90,29 +112,73 @@ class StopDecisionDataset(Dataset):
             )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
-        encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
+        if add_labels:
+            encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
+        if prefix is not None:
+            encoding = {f"{prefix}_{key}": val for key, val in encoding.items()}
 
         return encoding
 
+    def __getitem__(self, idx):
+        trace = self.data[idx]
 
-def compute_loss_func(target_type="abs_bce"):
-    def func(outputs, labels, num_items_in_batch=None):
+        if self.pairwise:
+            pos_trace, neg_trace = trace
+            pos_encoding = self._trace_to_encoding(pos_trace, add_labels=False, prefix="pos")
+            neg_encoding = self._trace_to_encoding(neg_trace, add_labels=False, prefix="neg")
+
+            return {**pos_encoding, **neg_encoding}
+        else:
+            encoding = self._trace_to_encoding(trace, add_labels=True)
+
+            return encoding
+
+
+class StopDecisionTrainer(Trainer):
+    def __init__(self, pairwise=False, target_type="abs_bce", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pairwise = pairwise
+        self.target_type = target_type
+
+    def compute_loss_func_pairwise(self, pos_outputs, neg_outputs, num_items_in_batch=None):
+        pos_logits = pos_outputs.logits.squeeze(-1)
+        neg_logits = neg_outputs.logits.squeeze(-1)
+
+        if self.target_type == "margin":
+            targets = torch.ones_like(pos_logits)
+            loss = nn.MarginRankingLoss(margin=1.0, reduction="sum")(pos_logits, neg_logits, targets)
+        elif self.target_type == "ranknet":
+            logits = torch.sigmoid(pos_logits - neg_logits)
+            targets = torch.ones_like(pos_logits)
+            loss = nn.BCELoss(reduction="sum")(logits, targets)
+        else:
+            raise ValueError(f"Unknown target type: {self.target_type}")
+
+        if num_items_in_batch is not None:
+            loss = loss / num_items_in_batch
+        else:
+            loss = loss / pos_logits.numel()
+
+        return loss
+
+    def compute_loss_func_pointwise(self, outputs, labels, num_items_in_batch=None):
         logits = outputs.logits.squeeze(-1)
-        if target_type == "abs_bce":
+
+        if self.target_type == "abs_bce":
             targets = labels[:, 0]
             loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
-        elif target_type == "abs_mse":
+        elif self.target_type == "abs_mse":
             targets = labels[:, 0]
             loss_fn = nn.MSELoss(reduction="sum")
-        elif target_type == "soft_diff":
+        elif self.target_type == "soft_diff":
             targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
             targets = torch.nan_to_num(targets, nan=0.0)
             loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
-        elif target_type == "hard_diff":
+        elif self.target_type == "hard_diff":
             targets = (labels[:, 0] >= labels[:, 1]).float()
             loss_fn = nn.BCEWithLogitsLoss(reduction="sum")
         else:
-            raise ValueError(f"Unknown target type: {target_type}")
+            raise ValueError(f"Unknown target type: {self.target_type}")
 
         loss = loss_fn(logits, targets)
         if num_items_in_batch is not None:
@@ -122,30 +188,100 @@ def compute_loss_func(target_type="abs_bce"):
 
         return loss
 
-    return func
+    def compute_loss(self, model, inputs, num_items_in_batch=None, return_outputs=False):
+        if self.pairwise:
+            pos_input_ids = inputs["pos_input_ids"]
+            pos_attention_mask = inputs["pos_attention_mask"]
+            pos_outputs = model(
+                input_ids=pos_input_ids,
+                attention_mask=pos_attention_mask,
+            )
+
+            neg_input_ids = inputs["neg_input_ids"]
+            neg_attention_mask = inputs["neg_attention_mask"]
+            neg_outputs = model(
+                input_ids=neg_input_ids,
+                attention_mask=neg_attention_mask,
+            )
+
+            outputs = {
+                "pos": pos_outputs,
+                "neg": neg_outputs,
+            }
+            loss = self.compute_loss_func_pairwise(pos_outputs, neg_outputs, num_items_in_batch)
+        else:
+            outputs = model(**inputs)
+            labels = inputs["labels"]
+            loss = self.compute_loss_func_pointwise(outputs, labels, num_items_in_batch)
+
+        return (loss, outputs) if return_outputs else loss
+
+    def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
+        inputs = self._prepare_inputs(inputs)
+
+        with torch.no_grad():
+            loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
+
+            if self.pairwise:
+                predictions = outputs["pos"].logits - outputs["neg"].logits
+                labels = torch.ones_like(predictions, dtype=torch.float)
+            else:
+                predictions = outputs.logits
+                if self.target_type == "abs_bce":
+                    labels = inputs["labels"][:, 0]
+                elif self.target_type == "abs_mse":
+                    labels = inputs["labels"][:, 0]
+                elif self.target_type == "soft_diff":
+                    labels = inputs["labels"][:, 0] / (inputs["labels"][:, 0] + inputs["labels"][:, 1])
+                    labels = torch.nan_to_num(labels, nan=0.0)
+                elif self.target_type == "hard_diff":
+                    labels = (inputs["labels"][:, 0] >= inputs["labels"][:, 1]).float()
+                else:
+                    raise ValueError(f"Unknown target type: {self.target_type}")
+
+        if prediction_loss_only:
+            return (loss, None, None)
+        return (loss, predictions, labels)
 
 
-def compute_metrics(threshold=0.8, target_type="abs_bce"):
+def collate_fn(pairwise=False):
+    def func_pairwise(batch):
+        pos_input_ids = torch.stack([item["pos_input_ids"] for item in batch])
+        pos_attention_mask = torch.stack([item["pos_attention_mask"] for item in batch])
+        neg_input_ids = torch.stack([item["neg_input_ids"] for item in batch])
+        neg_attention_mask = torch.stack([item["neg_attention_mask"] for item in batch])
+
+        return {
+            "pos_input_ids": pos_input_ids,
+            "pos_attention_mask": pos_attention_mask,
+            "neg_input_ids": neg_input_ids,
+            "neg_attention_mask": neg_attention_mask,
+        }
+
+    def func_pointwise(batch):
+        input_ids = torch.stack([item["input_ids"] for item in batch])
+        attention_mask = torch.stack([item["attention_mask"] for item in batch])
+        labels = torch.stack([item["labels"] for item in batch])
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
+
+    return func_pairwise if pairwise else func_pointwise
+
+
+def compute_metrics(pairwise=False, decision_threshold=0.8):
     def func(eval_pred):
         def sigmoid(x):
             return 1 / (1 + np.exp(-x))
 
         logits, labels = eval_pred
         preds = sigmoid(logits.squeeze(-1))
-        if target_type == "abs_bce":
-            targets = labels[:, 0]
-        elif target_type == "abs_mse":
-            targets = labels[:, 0]
-        elif target_type == "soft_diff":
-            targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
-            targets = np.nan_to_num(targets, nan=0.0)
-        elif target_type == "hard_diff":
-            targets = (labels[:, 0] >= labels[:, 1]).astype(float)
-        else:
-            raise ValueError(f"Unknown target type: {target_type}")
 
-        y_pred = (preds > threshold).astype(int)
-        y_true = (targets > threshold).astype(int)
+        y_pred = (preds > decision_threshold).astype(int)
+        y_true = (labels[:, 0] >= labels[:, 1]).astype(int)
         accuracy = accuracy_score(y_true, y_pred)
         precision = precision_score(y_true, y_pred, zero_division=1)
         recall = recall_score(y_true, y_pred, zero_division=1)
@@ -158,7 +294,7 @@ def compute_metrics(threshold=0.8, target_type="abs_bce"):
             "f1": f1,
         }
 
-    return func
+    return None if pairwise else func
 
 
 def parse_args():
@@ -168,8 +304,13 @@ def parse_args():
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
     parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
+    parser.add_argument("--max-train-items", type=int, help="Maximum number of training items")
+    parser.add_argument("--max-eval-items", type=int, help="Maximum number of evaluation items")
+    parser.add_argument("--max-test-items", type=int, help="Maximum number of test items")
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
+    parser.add_argument("--pairwise", action="store_true", help="Use pairwise training")
+    parser.add_argument("--pairwise-threshold", type=float, default=0.3, help="Pairwise training threshold")
     parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
     parser.add_argument("--use-lora", action="store_true", help="Use LoRA for training")
     parser.add_argument("--lora-r", type=int, default=32, help="LoRA Rank")
@@ -194,8 +335,8 @@ def parse_args():
     parser.add_argument("--logging-steps", type=int, default=10, help="Logging Steps")
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
-    parser.add_argument("--threshold", type=float, default=0.8, help="Threshold for stop decision")
-    parser.add_argument("--target-type", type=str, default="abs_bce", choices=["abs_bce", "abs_mse", "soft_diff", "hard_diff"], help="Target Type for Training")
+    parser.add_argument("--decision-threshold", type=float, default=0.8, help="Threshold for stop decision")
+    parser.add_argument("--target-type", type=str, default="abs_bce", choices=["abs_bce", "abs_mse", "soft_diff", "hard_diff", "margin", "ranknet"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
@@ -235,7 +376,6 @@ def main(args):
         quantization_config=nf4_config,
         device_map={"": local_rank},
         num_labels=1,
-        max_position_embeddings=args.max_length,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
@@ -290,7 +430,7 @@ def main(args):
         save_total_limit=args.save_total_limit,
         logging_steps=args.logging_steps,
         load_best_model_at_end=True,
-        label_names=["labels"],
+        label_names=["pos_input_ids", "pos_attention_mask", "neg_input_ids", "neg_attention_mask"] if args.pairwise else ["labels"],
         metric_for_best_model="eval_loss",
         deepspeed=args.deepspeed_config,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
@@ -300,19 +440,39 @@ def main(args):
         data_seed=args.seed,
     )
 
-    train_dataset = StopDecisionDataset(args.train_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
+    train_dataset = StopDecisionDataset(
+        filepath=args.train_data_path,
+        tokenizer=tokenizer,
+        max_items=args.max_train_items,
+        max_length=args.max_length,
+        target_label=args.target_label,
+        use_docs_only=args.use_docs_only,
+        pairwise=args.pairwise,
+        pairwise_threshold=args.pairwise_threshold,
+    )
     print(f"Number of training samples: {len(train_dataset)}", flush=True)
 
-    eval_dataset = StopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
+    eval_dataset = StopDecisionDataset(
+        filepath=args.eval_data_path,
+        tokenizer=tokenizer,
+        max_items=args.max_eval_items,
+        max_length=args.max_length,
+        target_label=args.target_label,
+        use_docs_only=args.use_docs_only,
+        pairwise=args.pairwise,
+        pairwise_threshold=args.pairwise_threshold,
+    )
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
-    trainer = Trainer(
+    trainer = StopDecisionTrainer(
+        pairwise=args.pairwise,
+        target_type=args.target_type,
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        compute_loss_func=compute_loss_func(args.target_type),
-        compute_metrics=compute_metrics(args.threshold, args.target_type),
+        compute_metrics=compute_metrics(args.pairwise, args.decision_threshold),
+        data_collator=collate_fn(args.pairwise),
         processing_class=tokenizer,
     )
 
@@ -320,7 +480,16 @@ def main(args):
 
     print("Training completed. Evaluating on test dataset...\n", flush=True)
 
-    test_dataset = StopDecisionDataset(args.test_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
+    test_dataset = StopDecisionDataset(
+        filepath=args.test_data_path,
+        tokenizer=tokenizer,
+        max_items=args.max_test_items,
+        max_length=args.max_length,
+        target_label=args.target_label,
+        use_docs_only=args.use_docs_only,
+        pairwise=args.pairwise,
+        pairwise_threshold=args.pairwise_threshold,
+    )
     print(f"Number of test samples: {len(test_dataset)}", flush=True)
 
     _, _, metrics = trainer.predict(test_dataset)
