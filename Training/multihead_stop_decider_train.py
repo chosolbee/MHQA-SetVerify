@@ -2,12 +2,7 @@ import os
 import sys
 import json
 import argparse
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score,
-)
+from sklearn.metrics import roc_auc_score, average_precision_score
 import numpy as np
 import torch
 import torch.nn as nn
@@ -329,18 +324,14 @@ def compute_metrics(eval_pred):
     labels_head1 = labels["head1"]
     labels_head2 = labels["head2"]
 
-    y_pred = (pred_head1 > pred_head2).astype(int)
-    y_true = (labels_head1 > labels_head2).astype(int)
-    accuracy = accuracy_score(y_true, y_pred)
-    precision = precision_score(y_true, y_pred, zero_division=1)
-    recall = recall_score(y_true, y_pred, zero_division=1)
-    f1 = f1_score(y_true, y_pred, zero_division=1)
+    y_true = (labels_head1 >= labels_head2).astype(int)
+    y_score = 1 / (1 + np.exp(-(pred_head1 - pred_head2)))
+    roc_auc = roc_auc_score(y_true, y_score)
+    pr_auc = average_precision_score(y_true, y_score)
 
     return {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
     }
 
 

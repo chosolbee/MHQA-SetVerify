@@ -3,12 +3,7 @@ import sys
 import json
 import argparse
 import numpy as np
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score
-)
+from sklearn.metrics import roc_auc_score, average_precision_score
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -35,7 +30,7 @@ class StopDecisionDataset(Dataset):
         self.target_label = target_label
 
         self.has_chat_template = (
-            hasattr(self.tokenizer, 'chat_template') and 
+            hasattr(self.tokenizer, 'chat_template') and
             self.tokenizer.chat_template is not None
         )
         self.use_docs_only = use_docs_only
@@ -125,40 +120,18 @@ def compute_loss_func(target_type="abs_bce"):
     return func
 
 
-def compute_metrics(threshold=0.8, target_type="abs_bce"):
-    def func(eval_pred):
-        def sigmoid(x):
-            return 1 / (1 + np.exp(-x))
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
 
-        logits, labels = eval_pred
-        preds = sigmoid(logits.squeeze(-1))
-        if target_type == "abs_bce":
-            targets = labels[:, 0]
-        elif target_type == "abs_mse":
-            targets = labels[:, 0]
-        elif target_type == "soft_diff":
-            targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
-            targets = np.nan_to_num(targets, nan=0.0)
-        elif target_type == "hard_diff":
-            targets = (labels[:, 0] >= labels[:, 1]).astype(float)
-        else:
-            raise ValueError(f"Unknown target type: {target_type}")
+    y_true = (labels[:, 0] >= labels[:, 1]).astype(int)
+    y_score = 1 / (1 + np.exp(-logits.squeeze(-1)))
+    roc_auc = roc_auc_score(y_true, y_score)
+    pr_auc = average_precision_score(y_true, y_score)
 
-        y_pred = (preds > threshold).astype(int)
-        y_true = (targets > threshold).astype(int)
-        accuracy = accuracy_score(y_true, y_pred)
-        precision = precision_score(y_true, y_pred, zero_division=1)
-        recall = recall_score(y_true, y_pred, zero_division=1)
-        f1 = f1_score(y_true, y_pred, zero_division=1)
-
-        return {
-            "accuracy": accuracy,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-        }
-
-    return func
+    return {
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
+    }
 
 
 def parse_args():
@@ -194,7 +167,6 @@ def parse_args():
     parser.add_argument("--logging-steps", type=int, default=10, help="Logging Steps")
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
-    parser.add_argument("--threshold", type=float, default=0.8, help="Threshold for stop decision")
     parser.add_argument("--target-type", type=str, default="abs_bce", choices=["abs_bce", "abs_mse", "soft_diff", "hard_diff"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
@@ -312,7 +284,7 @@ def main(args):
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         compute_loss_func=compute_loss_func(args.target_type),
-        compute_metrics=compute_metrics(args.threshold, args.target_type),
+        compute_metrics=compute_metrics,
         processing_class=tokenizer,
     )
 
