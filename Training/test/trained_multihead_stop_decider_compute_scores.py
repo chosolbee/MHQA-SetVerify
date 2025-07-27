@@ -34,7 +34,6 @@ if __name__ == "__main__":
         args.checkpoint_path,
         encoder_kwargs={
             "device_map": "auto",
-            "max_position_embeddings": args.max_length,
         },
         dtype=torch.bfloat16 if args.bf16 else torch.float32,
         inference_mode=True,

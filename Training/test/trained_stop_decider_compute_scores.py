@@ -47,19 +47,12 @@ if __name__ == "__main__":
             bnb_4bit_compute_dtype=torch.bfloat16 if args.bf16 else torch.float32,
         )
 
-    model_kwargs = {
-        "quantization_config": nf4_config,
-        "device_map": "auto",
-        "num_labels": 1,
-        "max_position_embeddings": args.max_length,
-    }
-
-    if "deberta" not in args.model_id.lower():
-        model_kwargs["use_cache"] = False
-
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_id if args.use_lora else args.checkpoint_path,
-        **model_kwargs
+        quantization_config=nf4_config,
+        torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
+        device_map="auto",
+        num_labels=1,
     )
 
     if args.use_lora:

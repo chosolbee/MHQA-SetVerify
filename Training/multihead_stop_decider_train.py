@@ -2,12 +2,7 @@ import os
 import sys
 import json
 import argparse
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score,
-)
+from sklearn.metrics import roc_auc_score, average_precision_score
 import numpy as np
 import torch
 import torch.nn as nn
@@ -469,18 +464,14 @@ def compute_metrics(eval_pred):
     labels_head1 = labels["head1"]
     labels_head2 = labels["head2"]
 
-    y_pred = (pred_head1 > pred_head2).astype(int)
-    y_true = (labels_head1 > labels_head2).astype(int)
-    accuracy = accuracy_score(y_true, y_pred)
-    precision = precision_score(y_true, y_pred, zero_division=1)
-    recall = recall_score(y_true, y_pred, zero_division=1)
-    f1 = f1_score(y_true, y_pred, zero_division=1)
+    y_true = (labels_head1 >= labels_head2).astype(int)
+    y_score = 1 / (1 + np.exp(-(pred_head1 - pred_head2)))
+    roc_auc = roc_auc_score(y_true, y_score)
+    pr_auc = average_precision_score(y_true, y_score)
 
     return {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
     }
 
 
@@ -491,7 +482,6 @@ def parse_args():
     parser.add_argument("--model-arch", type=str, default="decoder_only", choices=["encoder_only", "decoder_only", "encoder_decoder"], help="Model Architecture")
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
-    parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
     parser.add_argument("--lambda-init", type=float, default=1.0, help="Initial Value of lambda for TD Lambda")
     parser.add_argument("--lambda-final", type=float, default=0.1, help="Final Value of lambda for TD Lambda")
@@ -603,9 +593,7 @@ def main(args):
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
         logging_steps=args.logging_steps,
-        load_best_model_at_end=True,
         label_names=["curr_label", "cont_labels", "cont_mask", "cont_ids", "last_label"],
-        metric_for_best_model="eval_loss",
         deepspeed=args.deepspeed_config,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
         report_to=None if args.disable_wandb else ["wandb"],
@@ -642,16 +630,9 @@ def main(args):
 
     trainer.train()
 
-    print("Training completed. Evaluating on test dataset...\n", flush=True)
+    trainer.evaluate(eval_dataset)
 
-    test_dataset = MultiheadStopDecisionDataset(args.test_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
-    print(f"Number of test samples: {len(test_dataset)}", flush=True)
-
-    _, _, metrics = trainer.predict(test_dataset)
-
-    print("Test Metrics:", flush=True)
-    for key, value in metrics.items():
-        print(f"{key}: {value:.4f}", flush=True)
+    print("Training completed!", flush=True)
 
     wandb.finish()
 
