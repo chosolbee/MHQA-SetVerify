@@ -3,12 +3,7 @@ import sys
 import json
 import argparse
 import numpy as np
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score
-)
+from sklearn.metrics import roc_auc_score, average_precision_score
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -35,7 +30,7 @@ class StopDecisionDataset(Dataset):
         self.target_label = target_label
 
         self.has_chat_template = (
-            hasattr(self.tokenizer, 'chat_template') and 
+            hasattr(self.tokenizer, 'chat_template') and
             self.tokenizer.chat_template is not None
         )
         self.use_docs_only = use_docs_only
@@ -125,40 +120,18 @@ def compute_loss_func(target_type="abs_bce"):
     return func
 
 
-def compute_metrics(threshold=0.8, target_type="abs_bce"):
-    def func(eval_pred):
-        def sigmoid(x):
-            return 1 / (1 + np.exp(-x))
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
 
-        logits, labels = eval_pred
-        preds = sigmoid(logits.squeeze(-1))
-        if target_type == "abs_bce":
-            targets = labels[:, 0]
-        elif target_type == "abs_mse":
-            targets = labels[:, 0]
-        elif target_type == "soft_diff":
-            targets = labels[:, 0] / (labels[:, 0] + labels[:, 1])
-            targets = np.nan_to_num(targets, nan=0.0)
-        elif target_type == "hard_diff":
-            targets = (labels[:, 0] >= labels[:, 1]).astype(float)
-        else:
-            raise ValueError(f"Unknown target type: {target_type}")
+    y_true = (labels[:, 0] >= labels[:, 1]).astype(int)
+    y_score = 1 / (1 + np.exp(-logits.squeeze(-1)))
+    roc_auc = roc_auc_score(y_true, y_score)
+    pr_auc = average_precision_score(y_true, y_score)
 
-        y_pred = (preds > threshold).astype(int)
-        y_true = (targets > threshold).astype(int)
-        accuracy = accuracy_score(y_true, y_pred)
-        precision = precision_score(y_true, y_pred, zero_division=1)
-        recall = recall_score(y_true, y_pred, zero_division=1)
-        f1 = f1_score(y_true, y_pred, zero_division=1)
-
-        return {
-            "accuracy": accuracy,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-        }
-
-    return func
+    return {
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
+    }
 
 
 def parse_args():
@@ -167,7 +140,6 @@ def parse_args():
     parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="Model ID for Stop Decider")
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
-    parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
@@ -194,7 +166,6 @@ def parse_args():
     parser.add_argument("--logging-steps", type=int, default=10, help="Logging Steps")
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
-    parser.add_argument("--threshold", type=float, default=0.8, help="Threshold for stop decision")
     parser.add_argument("--target-type", type=str, default="abs_bce", choices=["abs_bce", "abs_mse", "soft_diff", "hard_diff"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
@@ -235,7 +206,6 @@ def main(args):
         quantization_config=nf4_config,
         device_map={"": local_rank},
         num_labels=1,
-        max_position_embeddings=args.max_length,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
@@ -289,9 +259,7 @@ def main(args):
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
         logging_steps=args.logging_steps,
-        load_best_model_at_end=True,
         label_names=["labels"],
-        metric_for_best_model="eval_loss",
         deepspeed=args.deepspeed_config,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
         report_to=None if args.disable_wandb else ["wandb"],
@@ -312,22 +280,15 @@ def main(args):
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         compute_loss_func=compute_loss_func(args.target_type),
-        compute_metrics=compute_metrics(args.threshold, args.target_type),
+        compute_metrics=compute_metrics,
         processing_class=tokenizer,
     )
 
     trainer.train()
 
-    print("Training completed. Evaluating on test dataset...\n", flush=True)
+    trainer.evaluate(eval_dataset)
 
-    test_dataset = StopDecisionDataset(args.test_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
-    print(f"Number of test samples: {len(test_dataset)}", flush=True)
-
-    _, _, metrics = trainer.predict(test_dataset)
-
-    print("Test Metrics:", flush=True)
-    for key, value in metrics.items():
-        print(f"{key}: {value:.4f}", flush=True)
+    print("Training completed!", flush=True)
 
     wandb.finish()
 
