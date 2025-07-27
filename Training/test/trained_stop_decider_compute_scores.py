@@ -50,9 +50,9 @@ if __name__ == "__main__":
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_id if args.use_lora else args.checkpoint_path,
         quantization_config=nf4_config,
+        torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
         device_map="auto",
         num_labels=1,
-        use_cache=False,
     )
 
     if args.use_lora:
