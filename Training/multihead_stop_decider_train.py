@@ -320,9 +320,9 @@ class MultiheadTrainer(Trainer):
 
     @torch.no_grad()
     def _compute_tdlambda_labels(self, model, inputs):
-        cont_labels = inputs["cont_labels"]  # (batch_size, k)
-        cont_ids = inputs["cont_ids"]  # (batch_size, k)
-        cont_mask = inputs["cont_mask"]  # (batch_size, k)
+        cont_labels = inputs["cont_labels"]  # (batch_size, n)
+        cont_ids = inputs["cont_ids"]  # (batch_size, n)
+        cont_mask = inputs["cont_mask"]  # (batch_size, n)
         valid_cont_ids = cont_ids[cont_mask]
 
         valid_bs_labels_head1 = torch.zeros_like(valid_cont_ids, dtype=cont_labels.dtype)
@@ -336,22 +336,24 @@ class MultiheadTrainer(Trainer):
             valid_bs_labels_head1[i:i + batch_size] = batch_bs_labels["preds_head1"].squeeze(-1)
             valid_bs_labels_head2[i:i + batch_size] = batch_bs_labels["preds_head2"].squeeze(-1)
 
-        bs_labels_head1 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, k)
-        bs_labels_head2 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, k)
+        bs_labels_head1 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, n)
+        bs_labels_head2 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, n)
         bs_labels_head1[cont_mask] = valid_bs_labels_head1
         bs_labels_head2[cont_mask] = valid_bs_labels_head2
 
-        cont_labels = self._create_sliding_tensor(cont_labels, cont_mask)  # (batch_size, k, k)
-        bs_labels_head1 = bs_labels_head1.unsqueeze(1)  # (batch_size, 1, k)
-        bs_labels_head2 = bs_labels_head2.unsqueeze(1)  # (batch_size, 1, k)
-        nstep_labels, _ = torch.cat([cont_labels, bs_labels_head1, bs_labels_head2], dim=1).max(dim=1)  # (batch_size, k)
+        cont_labels = self._create_sliding_tensor(cont_labels, cont_mask)  # (batch_size, n, n)
+        bs_labels_head1 = bs_labels_head1.unsqueeze(1)  # (batch_size, 1, n)
+        bs_labels_head2 = bs_labels_head2.unsqueeze(1)  # (batch_size, 1, n)
+        nstep_labels, _ = torch.cat([cont_labels, bs_labels_head1, bs_labels_head2], dim=1).max(dim=1)  # (batch_size, n)
+        nstep_labels = nstep_labels.masked_fill(~cont_mask, 0.0)
 
         curr_lambda = self.lambda_scheduler.get_lambda()
 
-        k = nstep_labels.shape[-1]
-        powers = torch.pow(curr_lambda, torch.arange(k, device=nstep_labels.device, dtype=nstep_labels.dtype))  # (k, )
+        n = nstep_labels.shape[-1]
+        powers = torch.pow(curr_lambda, torch.arange(n, device=nstep_labels.device, dtype=nstep_labels.dtype))  # (n, )
         weighted_sum = torch.sum(nstep_labels * powers.unsqueeze(0), dim=-1)  # (batch_size, )
 
+        k = torch.sum(cont_mask, dim=-1)  # (batch_size, )
         mc_label = self._compute_mc_labels(inputs)  # (batch_size, )
 
         tdlambda_label = (1 - curr_lambda) * weighted_sum + curr_lambda ** k * mc_label  # (batch_size, )
