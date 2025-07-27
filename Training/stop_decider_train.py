@@ -140,7 +140,6 @@ def parse_args():
     parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="Model ID for Stop Decider")
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
-    parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
@@ -260,9 +259,7 @@ def main(args):
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
         logging_steps=args.logging_steps,
-        load_best_model_at_end=True,
         label_names=["labels"],
-        metric_for_best_model="eval_loss",
         deepspeed=args.deepspeed_config,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
         report_to=None if args.disable_wandb else ["wandb"],
@@ -289,16 +286,9 @@ def main(args):
 
     trainer.train()
 
-    print("Training completed. Evaluating on test dataset...\n", flush=True)
+    trainer.evaluate(eval_dataset)
 
-    test_dataset = StopDecisionDataset(args.test_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
-    print(f"Number of test samples: {len(test_dataset)}", flush=True)
-
-    _, _, metrics = trainer.predict(test_dataset)
-
-    print("Test Metrics:", flush=True)
-    for key, value in metrics.items():
-        print(f"{key}: {value:.4f}", flush=True)
+    print("Training completed!", flush=True)
 
     wandb.finish()
 
