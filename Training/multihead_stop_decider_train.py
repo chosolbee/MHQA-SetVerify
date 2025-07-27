@@ -348,8 +348,8 @@ class MultiheadTrainer(Trainer):
         powers = torch.pow(curr_lambda, torch.arange(n, device=nstep_labels.device, dtype=nstep_labels.dtype))  # (n, )
         weighted_sum = torch.sum(nstep_labels * powers.unsqueeze(0), dim=-1)  # (batch_size, )
 
-        k = torch.sum(cont_mask, dim=-1)  # (batch_size, )
         mc_label = self._compute_mc_labels(inputs)  # (batch_size, )
+        k = torch.sum(cont_mask, dim=-1, dtype=mc_label.dtype)  # (batch_size, )
 
         tdlambda_label = (1 - curr_lambda) * weighted_sum + curr_lambda ** k * mc_label  # (batch_size, )
 
