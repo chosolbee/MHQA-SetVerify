@@ -35,29 +35,21 @@ class StopDecisionDataset(Dataset):
         self.target_label = target_label
 
         self.has_chat_template = (
-            hasattr(self.tokenizer, 'chat_template') and 
+            hasattr(self.tokenizer, 'chat_template') and
             self.tokenizer.chat_template is not None
         )
         self.use_docs_only = use_docs_only
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
-            self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
+            self.data = [trace for trace in self.data if trace["iter_cnt"] < 10
+                         and max([trace[f"{target_label}"]] + trace[f"cont_{target_label}"]) + [trace[f"last_{target_label}"]] > 0.0]
             np.random.shuffle(self.data)
-
-        pos_samples = [trace for trace in self.data if trace[target_label] > trace[f"max_cont_{target_label}"]]
-        neu_samples = [trace for trace in self.data if trace[target_label] == trace[f"max_cont_{target_label}"]]
-        neg_samples = [trace for trace in self.data if trace[target_label] < trace[f"max_cont_{target_label}"]]
-        min_len = min(len(pos_samples), len(neg_samples), len(neu_samples))
-        self.data = pos_samples[:min_len] + neg_samples[:min_len] + neu_samples[:min_len]
-        np.random.shuffle(self.data)
 
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx):
-        trace = self.data[idx]
-
+    def _trace_to_encoding(self, trace):
         if self.use_docs_only:
             filtered_trace = extract_documents_only(trace["trace"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
@@ -65,10 +57,7 @@ class StopDecisionDataset(Dataset):
             filtered_trace = trace["trace"]
             chat = gen_final_answer_prompt(trace["question"], filtered_trace)
 
-        label1 = trace[self.target_label]
-        label2 = trace[f"max_cont_{self.target_label}"]
-
-        if self.has_chat_template: # Decoder
+        if self.has_chat_template:  # Decoder
             encoding = self.tokenizer.apply_chat_template(
                 chat,
                 tokenize=True,
@@ -78,7 +67,7 @@ class StopDecisionDataset(Dataset):
                 return_tensors="pt",
                 return_dict=True
             )
-        else: # Encoder
+        else:  # Encoder
             text = convert_chat_to_text(chat, self.tokenizer, self.use_docs_only)
 
             encoding = self.tokenizer(
@@ -90,9 +79,17 @@ class StopDecisionDataset(Dataset):
             )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
+
+        label1 = trace[self.target_label]
+        label2 = max(trace[f"cont_{self.target_label}"] + [trace[f"last_{self.target_label}"]])
         encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
 
         return encoding
+
+    def __getitem__(self, idx):
+        trace = self.data[idx]
+
+        return self._trace_to_encoding(trace)
 
 
 def compute_loss_func(target_type="abs_bce"):
