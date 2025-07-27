@@ -20,6 +20,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainingArguments,
     Trainer,
+    TrainerCallback,
     set_seed,
 )
 from safetensors.torch import load_file
@@ -38,29 +39,22 @@ class MultiheadStopDecisionDataset(Dataset):
         self.target_label = target_label
 
         self.has_chat_template = (
-            hasattr(self.tokenizer, 'chat_template') and 
+            hasattr(self.tokenizer, 'chat_template') and
             self.tokenizer.chat_template is not None
         )
         self.use_docs_only = use_docs_only
 
         with open(filepath, "r", encoding="utf-8") as f:
-            self.data = [json.loads(line.strip()) for line in f]
-            self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
+            self.full_data = [json.loads(line.strip()) for line in f]
+            self.data = [trace for trace in self.full_data if trace["iter_cnt"] < 10
+                         and max([trace[f"{target_label}"]] + trace[f"cont_{target_label}"] + [trace[f"last_{target_label}"]]) > 0.0]
             np.random.shuffle(self.data)
-
-        pos_samples = [trace for trace in self.data if trace[target_label] > trace[f"max_cont_{target_label}"]]
-        neu_samples = [trace for trace in self.data if trace[target_label] == trace[f"max_cont_{target_label}"]]
-        neg_samples = [trace for trace in self.data if trace[target_label] < trace[f"max_cont_{target_label}"]]
-        min_len = min(len(pos_samples), len(neu_samples), len(neg_samples))
-        self.data = pos_samples[:min_len] + neu_samples[:min_len] + neg_samples[:min_len]
-        np.random.shuffle(self.data)
+            self.full_data = {trace["id"]: trace for trace in self.full_data}
 
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx):
-        trace = self.data[idx]
-
+    def _trace_to_encoding(self, trace, add_labels=True):
         if self.use_docs_only:
             filtered_trace = extract_documents_only(trace["trace"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
@@ -68,10 +62,7 @@ class MultiheadStopDecisionDataset(Dataset):
             filtered_trace = trace["trace"]
             chat = gen_final_answer_prompt(trace["question"], filtered_trace)
 
-        label1 = trace[self.target_label]
-        label2 = trace[f"max_cont_{self.target_label}"]
-
-        if self.has_chat_template: #Decoder
+        if self.has_chat_template:  # Decoder
             encoding = self.tokenizer.apply_chat_template(
                 chat,
                 tokenize=True,
@@ -81,7 +72,7 @@ class MultiheadStopDecisionDataset(Dataset):
                 return_tensors="pt",
                 return_dict=True
             )
-        else: #Encoder
+        else:  # Encoder
             text = convert_chat_to_text(chat, self.tokenizer, self.use_docs_only)
 
             encoding = self.tokenizer(
@@ -93,9 +84,30 @@ class MultiheadStopDecisionDataset(Dataset):
             )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
-        encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
+
+        if add_labels:
+            encoding["curr_label"] = torch.tensor(trace[self.target_label], dtype=torch.float)
+            encoding["cont_labels"] = torch.tensor(trace[f"cont_{self.target_label}"], dtype=torch.float)
+            encoding["cont_mask"] = torch.tensor(trace["cont_mask"], dtype=torch.bool)
+            encoding["cont_ids"] = torch.tensor(trace["cont_ids"], dtype=torch.long)
+            encoding["last_label"] = torch.tensor(trace[f"last_{self.target_label}"], dtype=torch.float)
 
         return encoding
+
+    def __getitem__(self, idx):
+        trace = self.data[idx]
+
+        return self._trace_to_encoding(trace, add_labels=True)
+
+    def get_batch_from_ids(self, trace_ids, device="cpu"):
+        batch = [self._trace_to_encoding(self.full_data[trace_id], add_labels=False) for trace_id in trace_ids]
+        input_ids = torch.stack([item["input_ids"] for item in batch]).to(device)
+        attention_mask = torch.stack([item["attention_mask"] for item in batch]).to(device)
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask
+        }
 
 
 class MultiheadConfig(PretrainedConfig):
@@ -276,9 +288,93 @@ class MultiheadModel(PreTrainedModel):
 
 
 class MultiheadTrainer(Trainer):
+    def __init__(self, *args, lambda_scheduler=None, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        total_steps = self.state.max_steps
+        if total_steps <= 0:
+            total_steps = (len(self.get_train_dataloader()) // self.args.gradient_accumulation_steps) * self.args.num_train_epochs
+
+        print(f"Total Steps: {total_steps}", flush=True)
+
+        self.lambda_scheduler = lambda_scheduler
+        self.lambda_scheduler.set_total_steps(total_steps)
+
+    def _create_sliding_tensor(self, tensor, mask):
+        m, n = tensor.shape
+        result = torch.full((m, n, n), float("-inf"), dtype=tensor.dtype, device=tensor.device)
+        for i in range(n):
+            result[:, i, i + 1:] = tensor[:, :n - i - 1]
+        result = result.masked_fill(~mask.unsqueeze(1).expand(m, n, n), float("-inf"))
+
+        return result
+
+    def _compute_mc_labels(self, inputs):
+        cont_labels = inputs["cont_labels"]  # (batch_size, k)
+        cont_mask = inputs["cont_mask"]  # (batch_size, k)
+        masked_cont_labels = cont_labels.masked_fill(~cont_mask, float("-inf"))  # (batch_size, k)
+        last_label = inputs["last_label"].unsqueeze(-1)  # (batch_size, 1)
+        mc_label, _ = torch.cat([masked_cont_labels, last_label], dim=-1).max(dim=-1)  # (batch_size, )
+
+        return mc_label
+
+    @torch.no_grad()
+    def _compute_tdlambda_labels(self, model, inputs):
+        cont_labels = inputs["cont_labels"]  # (batch_size, k)
+        cont_ids = inputs["cont_ids"]  # (batch_size, k)
+        cont_mask = inputs["cont_mask"]  # (batch_size, k)
+        valid_cont_ids = cont_ids[cont_mask]
+
+        valid_bs_labels_head1 = torch.zeros_like(valid_cont_ids, dtype=cont_labels.dtype)
+        valid_bs_labels_head2 = torch.zeros_like(valid_cont_ids, dtype=cont_labels.dtype)
+
+        batch_size = self._train_batch_size
+        for i in range(0, len(valid_cont_ids), batch_size):
+            batch_cont_ids = valid_cont_ids[i:i + batch_size].tolist()
+            batch_bs_inputs = self.train_dataset.get_batch_from_ids(batch_cont_ids, device=model.device)
+            batch_bs_labels = model(**batch_bs_inputs)
+            valid_bs_labels_head1[i:i + batch_size] = batch_bs_labels["preds_head1"].squeeze(-1)
+            valid_bs_labels_head2[i:i + batch_size] = batch_bs_labels["preds_head2"].squeeze(-1)
+
+        bs_labels_head1 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, k)
+        bs_labels_head2 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, k)
+        bs_labels_head1[cont_mask] = valid_bs_labels_head1
+        bs_labels_head2[cont_mask] = valid_bs_labels_head2
+
+        cont_labels = self._create_sliding_tensor(cont_labels, cont_mask)  # (batch_size, k, k)
+        bs_labels_head1 = bs_labels_head1.unsqueeze(1)  # (batch_size, 1, k)
+        bs_labels_head2 = bs_labels_head2.unsqueeze(1)  # (batch_size, 1, k)
+        nstep_labels, _ = torch.cat([cont_labels, bs_labels_head1, bs_labels_head2], dim=1).max(dim=1)  # (batch_size, k)
+
+        curr_lambda = self.lambda_scheduler.get_lambda()
+
+        k = nstep_labels.shape[-1]
+        powers = torch.pow(curr_lambda, torch.arange(k, device=nstep_labels.device, dtype=nstep_labels.dtype))  # (k, )
+        weighted_sum = torch.sum(nstep_labels * powers.unsqueeze(0), dim=-1)  # (batch_size, )
+
+        mc_label = self._compute_mc_labels(inputs)  # (batch_size, )
+
+        tdlambda_label = (1 - curr_lambda) * weighted_sum + curr_lambda ** k * mc_label  # (batch_size, )
+
+        return tdlambda_label
+
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        outputs = model(**inputs)
-        loss = self.compute_loss_func(outputs, inputs, num_items_in_batch)
+        outputs = model(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+        )
+
+        predictions = {
+            "head1": outputs["preds_head1"].squeeze(-1),
+            "head2": outputs["preds_head2"].squeeze(-1),
+        }
+
+        labels = {
+            "head1": inputs["curr_label"],
+            "head2": self._compute_tdlambda_labels(model, inputs),
+        }
+
+        loss = self.compute_loss_func(predictions, labels, num_items_in_batch)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -286,10 +382,10 @@ class MultiheadTrainer(Trainer):
         inputs = self._prepare_inputs(inputs)
 
         with torch.no_grad():
-            loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
-
-            if prediction_loss_only:
-                return (loss, None, None)
+            outputs = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+            )
 
             predictions = {
                 "head1": outputs["preds_head1"].squeeze(-1),
@@ -297,22 +393,68 @@ class MultiheadTrainer(Trainer):
             }
 
             labels = {
-                "head1": inputs["labels"][:, 0],
-                "head2": inputs["labels"][:, 1],
+                "head1": inputs["curr_label"],
+                "head2": self._compute_mc_labels(inputs),
             }
 
+            loss = self.compute_loss_func(predictions, labels)
+
+        if prediction_loss_only:
+            return (loss, None, None)
         return (loss, predictions, labels)
 
 
-def compute_loss_func(outputs, inputs, num_items_in_batch=None):
+class LambdaScheduler:
+    def __init__(self, lambda_init=1, lambda_final=0.1, scheduler_type="linear"):
+        self.lambda_init = lambda_init
+        self.lambda_final = lambda_final
+        self.scheduler_type = scheduler_type
+
+        self.total_steps = None
+        self.current_step = 0
+
+    def set_total_steps(self, total_steps):
+        self.total_steps = total_steps
+
+    def step(self):
+        self.current_step += 1
+
+    def get_lambda(self):
+        if self.total_steps is None:
+            return self.lambda_init
+
+        progress = min(self.current_step / self.total_steps, 1.0)
+
+        if self.scheduler_type == "linear":
+            return self.lambda_init - progress * (self.lambda_init - self.lambda_final)
+        elif self.scheduler_type == "exponential":
+            return self.lambda_init * (self.lambda_final / self.lambda_init) ** progress
+        elif self.scheduler_type == "cosine":
+            return self.lambda_final + 0.5 * (self.lambda_init - self.lambda_final) * (1 + np.cos(np.pi * progress))
+        else:
+            raise ValueError(f"Unsupported schedule type: {self.scheduler_type}")
+
+
+class LambdaDecayCallback(TrainerCallback):
+    def __init__(self, lambda_scheduler):
+        self.lambda_scheduler = lambda_scheduler
+
+    def on_step_end(self, args, state, control, **kwargs):
+        self.lambda_scheduler.step()
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        logs["train/lambda"] = self.lambda_scheduler.get_lambda()
+
+
+def compute_loss_func(predictions, labels, num_items_in_batch=None):
     loss_fn = nn.MSELoss(reduction="sum")
-    loss_head1 = loss_fn(outputs["preds_head1"].squeeze(-1), inputs["labels"][:, 0])
-    loss_head2 = loss_fn(outputs["preds_head2"].squeeze(-1), inputs["labels"][:, 1])
+    loss_head1 = loss_fn(predictions["head1"], labels["head1"])
+    loss_head2 = loss_fn(predictions["head2"], labels["head2"])
     loss = loss_head1 + loss_head2
     if num_items_in_batch is not None:
         loss = loss / num_items_in_batch
     else:
-        loss = loss / inputs["labels"].numel()
+        loss = loss / labels["head1"].numel()
 
     return loss
 
@@ -349,6 +491,9 @@ def parse_args():
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
     parser.add_argument("--test-data-path", type=str, required=True, help="Test Dataset Path")
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
+    parser.add_argument("--lambda-init", type=float, default=1.0, help="Initial Value of lambda for TD Lambda")
+    parser.add_argument("--lambda-final", type=float, default=0.1, help="Final Value of lambda for TD Lambda")
+    parser.add_argument("--lambda-scheduler-type", type=str, default="cosine", choices=["linear", "exponential", "cosine"], help="TD Lambda Scheduler Type")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     parser.add_argument("--dropout-prob", type=float, default=0.1, help="Dropout probability")
     parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
@@ -425,7 +570,6 @@ def main(args):
         config,
         encoder_kwargs={
             "device_map": {"": local_rank},
-            "max_position_embeddings": args.max_length,
         },
         inference_mode=False,
     )
@@ -458,7 +602,7 @@ def main(args):
         save_total_limit=args.save_total_limit,
         logging_steps=args.logging_steps,
         load_best_model_at_end=True,
-        label_names=["labels"],
+        label_names=["curr_label", "cont_labels", "cont_mask", "cont_ids", "last_label"],
         metric_for_best_model="eval_loss",
         deepspeed=args.deepspeed_config,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
@@ -474,7 +618,16 @@ def main(args):
     eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
+    lambda_scheduler = LambdaScheduler(
+        lambda_init=args.lambda_init,
+        lambda_final= args.lambda_final,
+        scheduler_type=args.lambda_scheduler_type,
+    )
+
+    lambda_decay_callback = LambdaDecayCallback(lambda_scheduler)
+
     trainer = MultiheadTrainer(
+        lambda_scheduler=lambda_scheduler,
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -482,6 +635,7 @@ def main(args):
         compute_loss_func=compute_loss_func,
         compute_metrics=compute_metrics,
         processing_class=tokenizer,
+        callbacks=[lambda_decay_callback],
     )
 
     trainer.train()
