@@ -207,7 +207,6 @@ def main(args):
         quantization_config=nf4_config,
         device_map={"": local_rank},
         num_labels=1,
-        max_position_embeddings=args.max_length,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
