@@ -18,13 +18,12 @@ if __name__ == "__main__":
     args = parse_args()
 
     df = pd.read_json(args.input_path, lines=True)
-    df = df.drop(columns=['question', 'trace'])  # FIXME
-    df['id'] = df.index
-    df['lookup_key'] = df['question_id'].astype(str) + '_iter' + df['iter_cnt'].astype(str)
-    df_pivot = df.set_index('lookup_key')
+    df["id"] = df.index
+    df["lookup_key"] = df["question_id"].astype(str) + "_iter" + df["iter_cnt"].astype(str)
+    df_pivot = df.set_index("lookup_key")
 
     def process_trace(row):
-        if row['iter_cnt'] == 10:
+        if row["iter_cnt"] == 10:
             return row
 
         question_id = row["question_id"]
