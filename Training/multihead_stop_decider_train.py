@@ -402,7 +402,7 @@ class MultiheadTrainer(Trainer):
 
 
 class LambdaScheduler:
-    def __init__(self, lambda_init=1, lambda_final=0.1, scheduler_type="linear"):
+    def __init__(self, lambda_init=1, lambda_final=0.1, scheduler_type="none"):
         self.lambda_init = lambda_init
         self.lambda_final = lambda_final
         self.scheduler_type = scheduler_type
@@ -428,6 +428,8 @@ class LambdaScheduler:
             return self.lambda_init * (self.lambda_final / self.lambda_init) ** progress
         elif self.scheduler_type == "cosine":
             return self.lambda_final + 0.5 * (self.lambda_init - self.lambda_final) * (1 + np.cos(np.pi * progress))
+        elif self.scheduler_type == "none":
+            return self.lambda_init
         else:
             raise ValueError(f"Unsupported schedule type: {self.scheduler_type}")
 
@@ -440,7 +442,8 @@ class LambdaDecayCallback(TrainerCallback):
         self.lambda_scheduler.step()
 
     def on_log(self, args, state, control, logs=None, **kwargs):
-        logs["train/lambda"] = self.lambda_scheduler.get_lambda()
+        if wandb.run is not None:
+            wandb.log({"train/lambda": self.lambda_scheduler.get_lambda()})
 
 
 def compute_loss_func(predictions, labels, num_items_in_batch=None):
@@ -485,7 +488,7 @@ def parse_args():
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
     parser.add_argument("--lambda-init", type=float, default=1.0, help="Initial Value of lambda for TD Lambda")
     parser.add_argument("--lambda-final", type=float, default=0.1, help="Final Value of lambda for TD Lambda")
-    parser.add_argument("--lambda-scheduler-type", type=str, default="cosine", choices=["linear", "exponential", "cosine"], help="TD Lambda Scheduler Type")
+    parser.add_argument("--lambda-scheduler-type", type=str, default="cosine", choices=["linear", "exponential", "cosine", "none"], help="TD Lambda Scheduler Type")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     parser.add_argument("--dropout-prob", type=float, default=0.1, help="Dropout probability")
     parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
@@ -501,6 +504,7 @@ def parse_args():
     parser.add_argument("--lr-scheduler-type", type=str, default="cosine", help="Learning Rate Scheduler Type")
     parser.add_argument("--warmup-ratio", type=float, default=0.1, help="Warmup Ratio")
     parser.add_argument("--weight-decay", type=float, default=0.01, help="Weight Decay")
+    parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Max Gradient Norm")
     parser.add_argument("--batch-size", type=int, default=2, help="Batch Size")
     parser.add_argument("--gradient-accumulation-steps", type=int, default=32, help="Gradient Accumulation Steps")
     parser.add_argument("--gradient-checkpointing", action="store_true", help="Use Gradient Checkpointing")
@@ -582,6 +586,7 @@ def main(args):
         lr_scheduler_type=args.lr_scheduler_type,
         warmup_ratio=args.warmup_ratio,
         weight_decay=args.weight_decay,
+        max_grad_norm=args.max_grad_norm,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
