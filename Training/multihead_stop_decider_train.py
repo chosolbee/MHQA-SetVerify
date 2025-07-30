@@ -402,7 +402,7 @@ class MultiheadTrainer(Trainer):
 
 
 class LambdaScheduler:
-    def __init__(self, lambda_init=1, lambda_final=0.1, scheduler_type="none"):
+    def __init__(self, lambda_init=1.0, lambda_final=0.1, scheduler_type="none"):
         self.lambda_init = lambda_init
         self.lambda_final = lambda_final
         self.scheduler_type = scheduler_type
@@ -468,7 +468,7 @@ def compute_metrics(eval_pred):
     labels_head2 = labels["head2"]
 
     y_true = (labels_head1 >= labels_head2).astype(int)
-    y_score = 1 / (1 + np.exp(-(pred_head1 - pred_head2)))
+    y_score = np.clip(pred_head1 - pred_head2 + 0.5, 0.0, 1.0)
     roc_auc = roc_auc_score(y_true, y_score)
     pr_auc = average_precision_score(y_true, y_score)
 
