@@ -43,3 +43,17 @@ torchaudio = [
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
+
+[tool.black]
+line-length = 140
+target-version = ['py311']
+skip-magic-trailing-comma = true
+
+[tool.pylint.'MESSAGES CONTROL']
+max-line-length = 140
+disable = [
+    'missing-module-docstring',
+    'missing-function-docstring',
+    'missing-class-docstring',
+    'consider-using-from-import',
+]
