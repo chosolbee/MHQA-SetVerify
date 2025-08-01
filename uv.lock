@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.11.*"
 resolution-markers = [
     "sys_platform == 'linux'",
@@ -498,6 +498,26 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/48/ce/13508a1ec3f8bb981ae4ca79ea40384becc868bfae97fd1c942bb3a001b1/email_validator-2.2.0.tar.gz", hash = "sha256:cb690f344c617a714f22e66ae771445a1ceb46821152df8e165c5f9a364582b7", size = 48967, upload-time = "2024-06-20T11:30:30.034Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d7/ee/bf0adb559ad3c786f12bcbc9296b3f5675f529199bef03e2df281fa1fadb/email_validator-2.2.0-py3-none-any.whl", hash = "sha256:561977c2d73ce3611850a06fa56b414621e0c8faa9d66f2611407d87465da631", size = 33521, upload-time = "2024-06-20T11:30:28.248Z" },
+]
+
+[[package]]
+name = "faiss-cpu"
+version = "1.11.0.post1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5c/f4/7c2136f4660ca504266cc08b38df2aa1db14fea93393b82e099ff34d7290/faiss_cpu-1.11.0.post1.tar.gz", hash = "sha256:06b1ea9ddec9e4d9a41c8ef7478d493b08d770e9a89475056e963081eed757d1", size = 70543, upload-time = "2025-07-15T09:15:02.127Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/20/9c7b72089fc00da380d66af2025f28f8665b7e5034573f81a10408837096/faiss_cpu-1.11.0.post1-cp311-cp311-macosx_13_0_x86_64.whl", hash = "sha256:2c8c384e65cc1b118d2903d9f3a27cd35f6c45337696fc0437f71e05f732dbc0", size = 7886449, upload-time = "2025-07-15T09:13:47.069Z" },
+    { url = "https://files.pythonhosted.org/packages/74/45/6b21bebea3e13f5e2b07741c6e5bda0b8ad07e852b3b68e4ae8e7ba53ab5/faiss_cpu-1.11.0.post1-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:36af46945274ed14751b788673125a8a4900408e4837a92371b0cad5708619ea", size = 3308146, upload-time = "2025-07-15T09:13:48.838Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/d6/2ff9ee33e63bd37a2d38eda7da051322cb652dd04dd73d560500f266b201/faiss_cpu-1.11.0.post1-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1b15412b22a05865433aecfdebf7664b9565bd49b600d23a0a27c74a5526893e", size = 3778592, upload-time = "2025-07-15T09:13:50.322Z" },
+    { url = "https://files.pythonhosted.org/packages/84/30/e06cfcedf4664907f39a93f21988149f05ae7fef62e988abb9e99940beeb/faiss_cpu-1.11.0.post1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:81c169ea74213b2c055b8240befe7e9b42a1f3d97cda5238b3b401035ce1a18b", size = 31295285, upload-time = "2025-07-15T09:13:52.612Z" },
+    { url = "https://files.pythonhosted.org/packages/71/7d/9cd6ac869ec062c79ef1dc62ff62e2c22b7572bf15a9454af2fdc7dc98a0/faiss_cpu-1.11.0.post1-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:0794eb035c6075e931996cf2b2703fbb3f47c8c34bc2d727819ddc3e5e486a31", size = 9700900, upload-time = "2025-07-15T09:13:54.894Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/96/f0159b274331db9ae6fbc85531e8ec6f69c83b28c24d16a555437af5da35/faiss_cpu-1.11.0.post1-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:18d2221014813dc9a4236e47f9c4097a71273fbf17c3fe66243e724e2018a67a", size = 24018792, upload-time = "2025-07-15T09:13:57.524Z" },
+    { url = "https://files.pythonhosted.org/packages/61/84/69dbb244cf592be8532f7a91577d765a6b663275599e636190d9745b3cc5/faiss_cpu-1.11.0.post1-cp311-cp311-win_amd64.whl", hash = "sha256:3ce8a8984a7dcc689fd192c69a476ecd0b2611c61f96fe0799ff432aa73ff79c", size = 14880665, upload-time = "2025-07-15T09:13:59.971Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/c4/1873ced6e44f07cfaade55e60860f84443fa94a263ec6b355cb6ae026ca4/faiss_cpu-1.11.0.post1-cp311-cp311-win_arm64.whl", hash = "sha256:8384e05afb7c7968e93b81566759f862e744c0667b175086efb3d8b20949b39f", size = 7849518, upload-time = "2025-07-15T09:14:04.398Z" },
 ]
 
 [[package]]
@@ -1038,6 +1058,7 @@ dependencies = [
     { name = "black" },
     { name = "datasets" },
     { name = "deepspeed" },
+    { name = "faiss-cpu" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "openai" },
@@ -1063,6 +1084,7 @@ requires-dist = [
     { name = "black", specifier = ">=25.1.0" },
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "deepspeed", specifier = ">=0.17.4" },
+    { name = "faiss-cpu", specifier = ">=1.11.0.post1" },
     { name = "matplotlib", specifier = ">=3.10.5" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "openai", specifier = ">=1.90.0" },
