@@ -342,10 +342,6 @@ class MultiheadTrainer(Trainer):
         nstep_labels, _ = torch.cat([cont_labels, bs_labels_head1, bs_labels_head2], dim=1).max(dim=1)  # (batch_size, n)
         nstep_labels = nstep_labels.masked_fill(~cont_mask, 0.0)  # (batch_size, n) (unnecessary line but for clarity)
 
-        last_label = inputs["last_label"].unsqueeze(-1)  # (batch_size, 1)
-        last_mask = cont_mask[:, 0:1]  # (batch_size, 1)
-        nstep_labels += last_label.masked_fill(last_mask, 0.0)  # (batch_size, n)
-
         curr_lambda = self.lambda_scheduler.get_lambda()
 
         n = nstep_labels.shape[-1]
@@ -358,16 +354,16 @@ class MultiheadTrainer(Trainer):
         tdlambda_label = (1 - curr_lambda) * weighted_sum + curr_lambda ** k * mc_label  # (batch_size, )
 
         return tdlambda_label
-    
-    def _compute_td0_labels(self, inputs):
+
+    def _compute_td0_labels(self, model, inputs):
         cont_ids = inputs["cont_ids"]  # (batch_size, n)
         cont_mask = inputs["cont_mask"]  # (batch_size, n)
         next_id = cont_ids[:, 0]  # (batch_size, )
         next_mask = cont_mask[:, 0]  # (batch_size, )
         valid_next_id = next_id[next_mask]
 
-        batch_bs_inputs = self.train_dataset.get_batch_from_ids(valid_next_id, device=self.model.device)
-        batch_bs_labels = self.model(**batch_bs_inputs)
+        batch_bs_inputs = self.train_dataset.get_batch_from_ids(valid_next_id, device=model.device)
+        batch_bs_labels = model(**batch_bs_inputs)
         valid_bs_labels_head1 = batch_bs_labels["preds_head1"].squeeze(-1)
         valid_bs_labels_head2 = batch_bs_labels["preds_head2"].squeeze(-1)
 
@@ -405,12 +401,12 @@ class MultiheadTrainer(Trainer):
         elif self.target_type == "tdlambda":
             labels = {
                 "head1": inputs["curr_label"],
-                "head2": self._compute_tdlambda_labels(inputs),
+                "head2": self._compute_tdlambda_labels(model, inputs),
             }
         elif self.target_type == "td0":
             labels = {
                 "head1": inputs["curr_label"],
-                "head2": self._compute_td0_labels(inputs),
+                "head2": self._compute_td0_labels(model, inputs),
             }
         else:
             raise ValueError(f"Unsupported target type: {self.target_type}")
