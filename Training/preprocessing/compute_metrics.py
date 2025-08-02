@@ -3,35 +3,12 @@ import sys
 import json
 import argparse
 from tqdm import tqdm
-import pandas as pd
 import numpy as np
 import torch
 from vllm import LLM, SamplingParams
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt
 from pipeline.utils import compute_all_answer_metrics
-
-tqdm.pandas()
-
-
-def compute_max_cont_metrics(group):
-    max_cont_ems = []
-    max_cont_f1s = []
-    for _, row in group.iterrows():
-        future_mask = group["iter_cnt"] > row["iter_cnt"]
-        if future_mask.any():
-            max_cont_em = group.loc[future_mask, "em"].max()
-            max_cont_f1 = group.loc[future_mask, "f1"].max()
-        else:
-            max_cont_em = 0.0
-            max_cont_f1 = 0.0
-        max_cont_ems.append(max_cont_em)
-        max_cont_f1s.append(max_cont_f1)
-
-    group = group.copy()
-    group["max_cont_em"] = max_cont_ems
-    group["max_cont_f1"] = max_cont_f1s
-    return group
 
 
 def parse_args():
@@ -109,16 +86,5 @@ if __name__ == "__main__":
                 trace["em"] = em
                 trace["f1"] = f1
                 f.write(json.dumps(trace, ensure_ascii=False) + "\n")
-
-    df = pd.DataFrame(traces)
-
-    print("Computing 'max_cont_em' and 'max_cont_f1'...")
-
-    df = df.sort_values(["question_id", "iter_cnt"])
-    df = df.groupby("question_id", group_keys=False).progress_apply(compute_max_cont_metrics)
-
-    print("Writing output...")
-
-    df.to_json(args.output_path, orient="records", lines=True, force_ascii=False, mode="w")
 
     print(f"Processing complete. Output written to {args.output_path}")

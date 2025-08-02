@@ -3,14 +3,11 @@ import sys
 import json
 import argparse
 from tqdm import tqdm
-import pandas as pd
 import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer, AutoModelForCausalLM
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt
-
-tqdm.pandas()
 
 
 def setup_distributed():
@@ -33,21 +30,6 @@ def setup_distributed():
 def cleanup_distributed():
     if dist.is_initialized():
         dist.destroy_process_group()
-
-
-def compute_max_cont_prob(group):
-    max_cont_probs = []
-    for _, row in group.iterrows():
-        future_mask = group["iter_cnt"] > row["iter_cnt"]
-        if future_mask.any():
-            max_cont_prob = group.loc[future_mask, "prob"].max()
-        else:
-            max_cont_prob = 0.0
-        max_cont_probs.append(max_cont_prob)
-
-    group = group.copy()
-    group["max_cont_prob"] = max_cont_probs
-    return group
 
 
 def parse_args():
@@ -155,23 +137,6 @@ if __name__ == "__main__":
 
         del logits
         torch.cuda.empty_cache()
-
-    if world_size > 1:
-        dist.barrier()
-
-    if rank == 0:
-        df = pd.DataFrame(traces)
-
-        print("Computing 'max_cont_prob'...")
-
-        df = df.sort_values(["question_id", "iter_cnt"])
-        df = df.groupby("question_id", group_keys=False).progress_apply(compute_max_cont_prob)
-
-        print("Writing output...")
-
-        df.to_json(args.output_path, orient="records", lines=True, force_ascii=False, mode="w")
-
-        print(f"Processing complete. Output written to {args.output_path}")
 
     if world_size > 1:
         dist.barrier()
