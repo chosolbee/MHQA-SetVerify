@@ -9,7 +9,6 @@ dependencies = [
     "autoawq>=0.2.9",
     "autoawq-kernels>=0.0.9",
     "bitsandbytes>=0.46.1",
-    "black>=25.1.0",
     "datasets>=4.0.0",
     "deepspeed>=0.17.4",
     "faiss-cpu>=1.11.0.post1",
@@ -19,7 +18,6 @@ dependencies = [
     "openai>=1.90.0",
     "pandas>=2.3.1",
     "peft>=0.16.0",
-    "pylint>=3.3.7",
     "scikit-learn>=1.7.1",
     "sentencepiece>=0.2.0",
     "torch>=2.7.0",
@@ -29,6 +27,12 @@ dependencies = [
     "transformers>=4.54.1",
     "vllm>=0.10.0",
     "wandb>=0.21.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "pylint>=3.3.7",
 ]
 
 [tool.uv.sources]

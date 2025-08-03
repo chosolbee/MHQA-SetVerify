@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.11.*"
 resolution-markers = [
     "sys_platform == 'linux'",
@@ -1095,7 +1095,6 @@ dependencies = [
     { name = "autoawq" },
     { name = "autoawq-kernels" },
     { name = "bitsandbytes" },
-    { name = "black" },
     { name = "datasets" },
     { name = "deepspeed" },
     { name = "faiss-cpu" },
@@ -1105,7 +1104,6 @@ dependencies = [
     { name = "openai" },
     { name = "pandas" },
     { name = "peft" },
-    { name = "pylint" },
     { name = "scikit-learn" },
     { name = "sentencepiece" },
     { name = "torch" },
@@ -1117,13 +1115,18 @@ dependencies = [
     { name = "wandb" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "black" },
+    { name = "pylint" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.9.0" },
     { name = "autoawq", specifier = ">=0.2.9" },
     { name = "autoawq-kernels", specifier = ">=0.0.9" },
     { name = "bitsandbytes", specifier = ">=0.46.1" },
-    { name = "black", specifier = ">=25.1.0" },
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "deepspeed", specifier = ">=0.17.4" },
     { name = "faiss-cpu", specifier = ">=1.11.0.post1" },
@@ -1133,7 +1136,6 @@ requires-dist = [
     { name = "openai", specifier = ">=1.90.0" },
     { name = "pandas", specifier = ">=2.3.1" },
     { name = "peft", specifier = ">=0.16.0" },
-    { name = "pylint", specifier = ">=3.3.7" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "torch", specifier = ">=2.7.0", index = "https://download.pytorch.org/whl/cu126" },
@@ -1143,6 +1145,12 @@ requires-dist = [
     { name = "transformers", specifier = ">=4.54.1" },
     { name = "vllm", specifier = ">=0.10.0" },
     { name = "wandb", specifier = ">=0.21.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = ">=25.1.0" },
+    { name = "pylint", specifier = ">=3.3.7" },
 ]
 
 [[package]]
