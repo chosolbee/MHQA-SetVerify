@@ -2,5 +2,5 @@
 
 ```bash
 uv sync
-uv run python {SOURCE}
+uv run [COMMAND]
 ```
