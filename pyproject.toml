@@ -1,0 +1,66 @@
+[project]
+name = "MHQA-SetVerify"
+version = "0.1.0"
+description = "Set Verification for Multi-Hop QA"
+readme = "README.md"
+requires-python = "~=3.11.0"
+dependencies = [
+    "accelerate>=1.9.0",
+    "autoawq>=0.2.9",
+    "autoawq-kernels>=0.0.9",
+    "bitsandbytes>=0.46.1",
+    "datasets>=4.0.0",
+    "deepspeed>=0.17.4",
+    "faiss-cpu>=1.11.0.post1",
+    "flashinfer-python>=0.2.8",
+    "matplotlib>=3.10.5",
+    "numpy>=2.2.6",
+    "openai>=1.90.0",
+    "pandas>=2.3.1",
+    "peft>=0.16.0",
+    "scikit-learn>=1.7.1",
+    "sentencepiece>=0.2.0",
+    "torch>=2.7.0",
+    "torchaudio>=0.7.0",
+    "torchvision>=0.22.0",
+    "tqdm>=4.67.1",
+    "transformers>=4.54.1",
+    "vllm>=0.10.0",
+    "wandb>=0.21.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "pylint>=3.3.7",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126" },
+]
+torchvision = [
+    { index = "pytorch-cu126" },
+]
+torchaudio = [
+    { index = "pytorch-cu126" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.black]
+line-length = 140
+target-version = ['py311']
+skip-magic-trailing-comma = true
+
+[tool.pylint.'MESSAGES CONTROL']
+max-line-length = 140
+disable = [
+    'missing-module-docstring',
+    'missing-function-docstring',
+    'missing-class-docstring',
+    'consider-using-from-import',
+]
