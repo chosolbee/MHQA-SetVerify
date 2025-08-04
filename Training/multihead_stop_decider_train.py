@@ -15,6 +15,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainingArguments,
     Trainer,
+    TrainerCallback,
     set_seed,
 )
 from safetensors.torch import load_file
@@ -33,29 +34,22 @@ class MultiheadStopDecisionDataset(Dataset):
         self.target_label = target_label
 
         self.has_chat_template = (
-            hasattr(self.tokenizer, 'chat_template') and 
+            hasattr(self.tokenizer, 'chat_template') and
             self.tokenizer.chat_template is not None
         )
         self.use_docs_only = use_docs_only
 
         with open(filepath, "r", encoding="utf-8") as f:
-            self.data = [json.loads(line.strip()) for line in f]
-            self.data = [trace for trace in self.data if trace["iter_cnt"] < 10]
+            self.full_data = [json.loads(line.strip()) for line in f]
+            self.data = [trace for trace in self.full_data if trace["iter_cnt"] < 10
+                         and max([trace[f"{target_label}"]] + trace[f"cont_{target_label}"] + [trace[f"last_{target_label}"]]) > 0.0]
             np.random.shuffle(self.data)
-
-        pos_samples = [trace for trace in self.data if trace[target_label] > trace[f"max_cont_{target_label}"]]
-        neu_samples = [trace for trace in self.data if trace[target_label] == trace[f"max_cont_{target_label}"]]
-        neg_samples = [trace for trace in self.data if trace[target_label] < trace[f"max_cont_{target_label}"]]
-        min_len = min(len(pos_samples), len(neu_samples), len(neg_samples))
-        self.data = pos_samples[:min_len] + neu_samples[:min_len] + neg_samples[:min_len]
-        np.random.shuffle(self.data)
+            self.full_data = {trace["id"]: trace for trace in self.full_data}
 
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx):
-        trace = self.data[idx]
-
+    def _trace_to_encoding(self, trace, add_labels=True):
         if self.use_docs_only:
             filtered_trace = extract_documents_only(trace["trace"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
@@ -63,10 +57,7 @@ class MultiheadStopDecisionDataset(Dataset):
             filtered_trace = trace["trace"]
             chat = gen_final_answer_prompt(trace["question"], filtered_trace)
 
-        label1 = trace[self.target_label]
-        label2 = trace[f"max_cont_{self.target_label}"]
-
-        if self.has_chat_template: #Decoder
+        if self.has_chat_template:  # Decoder
             encoding = self.tokenizer.apply_chat_template(
                 chat,
                 tokenize=True,
@@ -76,7 +67,7 @@ class MultiheadStopDecisionDataset(Dataset):
                 return_tensors="pt",
                 return_dict=True
             )
-        else: #Encoder
+        else:  # Encoder
             text = convert_chat_to_text(chat, self.tokenizer, self.use_docs_only)
 
             encoding = self.tokenizer(
@@ -88,9 +79,30 @@ class MultiheadStopDecisionDataset(Dataset):
             )
 
         encoding = {key: val.flatten() for key, val in encoding.items()}
-        encoding["labels"] = torch.tensor([label1, label2], dtype=torch.float)
+
+        if add_labels:
+            encoding["curr_label"] = torch.tensor(trace[self.target_label], dtype=torch.float)
+            encoding["cont_labels"] = torch.tensor(trace[f"cont_{self.target_label}"], dtype=torch.float)
+            encoding["cont_mask"] = torch.tensor(trace["cont_mask"], dtype=torch.bool)
+            encoding["cont_ids"] = torch.tensor(trace["cont_ids"], dtype=torch.long)
+            encoding["last_label"] = torch.tensor(trace[f"last_{self.target_label}"], dtype=torch.float)
 
         return encoding
+
+    def __getitem__(self, idx):
+        trace = self.data[idx]
+
+        return self._trace_to_encoding(trace, add_labels=True)
+
+    def get_batch_from_ids(self, trace_ids, device="cpu"):
+        batch = [self._trace_to_encoding(self.full_data[trace_id], add_labels=False) for trace_id in trace_ids]
+        input_ids = torch.stack([item["input_ids"] for item in batch]).to(device)
+        attention_mask = torch.stack([item["attention_mask"] for item in batch]).to(device)
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask
+        }
 
 
 class MultiheadConfig(PretrainedConfig):
@@ -148,10 +160,19 @@ class MultiheadModel(PreTrainedModel):
             encoder_lora_config = LoraConfig(inference_mode=inference_mode, **config.encoder_lora_config)
             self.encoder = PeftModel(self.encoder, encoder_lora_config)
 
-        self.dense = nn.Linear(self.encoder.config.hidden_size, self.encoder.config.hidden_size, device=self.encoder.device, dtype=dtype)
-        self.dropout = nn.Dropout(config.dropout_prob)
-        self.classifier_head1 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
-        self.classifier_head2 = nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype)
+        self.classifier1 = nn.Sequential(
+            nn.Dropout(config.dropout_prob),
+            nn.Linear(self.encoder.config.hidden_size, self.encoder.config.hidden_size, device=self.encoder.device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype),
+        )
+
+        self.classifier2 = nn.Sequential(
+            nn.Dropout(config.dropout_prob),
+            nn.Linear(self.encoder.config.hidden_size, self.encoder.config.hidden_size, device=self.encoder.device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(self.encoder.config.hidden_size, 1, device=self.encoder.device, dtype=dtype),
+        )
 
         self.post_init()
 
@@ -183,35 +204,26 @@ class MultiheadModel(PreTrainedModel):
             state_dict_encoder, strict=strict, assign=assign
         )
 
-        state_dict_dense = {
+        state_dict_classifier1 = {
             k.split(".", 1)[-1]: v
             for k, v in state_dict.items()
-            if k.startswith("dense.")
+            if k.startswith("classifier1.")
         }
-        missing_dense, unexpected_dense = self.dense.load_state_dict(
-            state_dict_dense, strict=strict, assign=assign
+        missing_classifier1, unexpected_classifier1 = self.classifier1.load_state_dict(
+            state_dict_classifier1, strict=strict, assign=assign
         )
 
-        state_dict_classifier_head1 = {
+        state_dict_classifier2 = {
             k.split(".", 1)[-1]: v
             for k, v in state_dict.items()
-            if k.startswith("classifier_head1.")
+            if k.startswith("classifier2.")
         }
-        missing_classifier_head1, unexpected_classifier_head1 = self.classifier_head1.load_state_dict(
-            state_dict_classifier_head1, strict=strict, assign=assign
+        missing_classifier2, unexpected_classifier2 = self.classifier2.load_state_dict(
+            state_dict_classifier2, strict=strict, assign=assign
         )
 
-        state_dict_classifier_head2 = {
-            k.split(".", 1)[-1]: v
-            for k, v in state_dict.items()
-            if k.startswith("classifier_head2.")
-        }
-        missing_classifier_head2, unexpected_classifier_head2 = self.classifier_head2.load_state_dict(
-            state_dict_classifier_head2, strict=strict, assign=assign
-        )
-
-        return missing_encoder + missing_dense + missing_classifier_head1 + missing_classifier_head2, \
-               unexpected_encoder + unexpected_dense + unexpected_classifier_head1 + unexpected_classifier_head2
+        return missing_encoder + missing_classifier1 + missing_classifier2, \
+               unexpected_encoder + unexpected_classifier1 + unexpected_classifier2
 
     def print_trainable_parameters(self):
         trainable_params = 0
@@ -249,10 +261,8 @@ class MultiheadModel(PreTrainedModel):
         else:
             raise ValueError(f"Unsupported encoder architecture: {self.config.encoder_arch}")
 
-        pooled_output = self.dense(pooled_output)
-        pooled_output = self.dropout(pooled_output)
-        preds_head1 = self.classifier_head1(pooled_output)
-        preds_head2 = self.classifier_head2(pooled_output)
+        preds_head1 = self.classifier1(pooled_output)
+        preds_head2 = self.classifier2(pooled_output)
 
         return {
             "preds_head1": preds_head1,
@@ -261,12 +271,10 @@ class MultiheadModel(PreTrainedModel):
 
     def to(self, *args, **kwargs):
         self.encoder.to(*args, **kwargs)
-        self.dense.to(*args, **kwargs)
-        self.dropout.to(*args, **kwargs)
-        self.classifier_head1.to(*args, **kwargs)
-        self.classifier_head2.to(*args, **kwargs)
+        self.classifier1.to(*args, **kwargs)
+        self.classifier2.to(*args, **kwargs)
         return self
-    
+
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
         self.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
 
@@ -275,9 +283,135 @@ class MultiheadModel(PreTrainedModel):
 
 
 class MultiheadTrainer(Trainer):
+    def __init__(self, *args, target_type="tdlambda", lambda_scheduler=None, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.target_type = target_type
+
+        total_steps = self.state.max_steps
+        if total_steps <= 0:
+            total_steps = (len(self.get_train_dataloader()) // self.args.gradient_accumulation_steps) * self.args.num_train_epochs
+
+        self.lambda_scheduler = lambda_scheduler
+        self.lambda_scheduler.set_total_steps(total_steps)
+
+    def _create_sliding_tensor(self, tensor, mask):
+        m, n = tensor.shape
+        result = torch.full((m, n, n), float("-inf"), dtype=tensor.dtype, device=tensor.device)
+        for i in range(n):
+            result[:, i, i + 1:] = tensor[:, :n - i - 1]
+        result = result.masked_fill(~mask.unsqueeze(1).expand(m, n, n), float("-inf"))
+
+        return result
+
+    def _compute_mc_labels(self, inputs):
+        cont_labels = inputs["cont_labels"]  # (batch_size, n)
+        cont_mask = inputs["cont_mask"]  # (batch_size, n)
+        masked_cont_labels = cont_labels.masked_fill(~cont_mask, float("-inf"))  # (batch_size, n)
+        last_label = inputs["last_label"].unsqueeze(-1)  # (batch_size, 1)
+        mc_label, _ = torch.cat([masked_cont_labels, last_label], dim=-1).max(dim=-1)  # (batch_size, )
+
+        return mc_label
+
+    @torch.no_grad()
+    def _compute_tdlambda_labels(self, model, inputs):
+        cont_labels = inputs["cont_labels"]  # (batch_size, n)
+        cont_ids = inputs["cont_ids"]  # (batch_size, n)
+        cont_mask = inputs["cont_mask"]  # (batch_size, n)
+        valid_cont_ids = cont_ids[cont_mask]
+
+        valid_bs_labels_head1 = torch.zeros_like(valid_cont_ids, dtype=cont_labels.dtype)
+        valid_bs_labels_head2 = torch.zeros_like(valid_cont_ids, dtype=cont_labels.dtype)
+
+        batch_size = self._train_batch_size
+        for i in range(0, len(valid_cont_ids), batch_size):
+            batch_cont_ids = valid_cont_ids[i:i + batch_size].tolist()
+            batch_bs_inputs = self.train_dataset.get_batch_from_ids(batch_cont_ids, device=model.device)
+            batch_bs_labels = model(**batch_bs_inputs)
+            valid_bs_labels_head1[i:i + batch_size] = batch_bs_labels["preds_head1"].squeeze(-1)
+            valid_bs_labels_head2[i:i + batch_size] = batch_bs_labels["preds_head2"].squeeze(-1)
+
+        bs_labels_head1 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, n)
+        bs_labels_head2 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, n)
+        bs_labels_head1[cont_mask] = valid_bs_labels_head1
+        bs_labels_head2[cont_mask] = valid_bs_labels_head2
+
+        cont_labels = self._create_sliding_tensor(cont_labels, cont_mask)  # (batch_size, n, n)
+        bs_labels_head1 = bs_labels_head1.unsqueeze(1)  # (batch_size, 1, n)
+        bs_labels_head2 = bs_labels_head2.unsqueeze(1)  # (batch_size, 1, n)
+        nstep_labels, _ = torch.cat([cont_labels, bs_labels_head1, bs_labels_head2], dim=1).max(dim=1)  # (batch_size, n)
+        nstep_labels = nstep_labels.masked_fill(~cont_mask, 0.0)  # (batch_size, n) (unnecessary line but for clarity)
+
+        curr_lambda = self.lambda_scheduler.get_lambda()
+
+        n = nstep_labels.shape[-1]
+        powers = torch.pow(curr_lambda, torch.arange(n, device=nstep_labels.device, dtype=nstep_labels.dtype))  # (n, )
+        weighted_sum = torch.sum(nstep_labels * powers.unsqueeze(0), dim=-1)  # (batch_size, )
+
+        mc_label = self._compute_mc_labels(inputs)  # (batch_size, )
+        k = torch.sum(cont_mask, dim=-1, dtype=mc_label.dtype)  # (batch_size, )
+
+        tdlambda_label = (1 - curr_lambda) * weighted_sum + curr_lambda ** k * mc_label  # (batch_size, )
+
+        return tdlambda_label
+
+    def _compute_td0_labels(self, model, inputs):
+        cont_ids = inputs["cont_ids"]  # (batch_size, n)
+        cont_mask = inputs["cont_mask"]  # (batch_size, n)
+        next_id = cont_ids[:, 0]  # (batch_size, )
+        next_mask = cont_mask[:, 0]  # (batch_size, )
+        valid_next_id = next_id[next_mask]
+
+        batch_bs_inputs = self.train_dataset.get_batch_from_ids(valid_next_id, device=model.device)
+        batch_bs_labels = model(**batch_bs_inputs)
+        valid_bs_labels_head1 = batch_bs_labels["preds_head1"].squeeze(-1)
+        valid_bs_labels_head2 = batch_bs_labels["preds_head2"].squeeze(-1)
+
+        bs_label_head1 = torch.zeros_like(next_id, dtype=inputs["cont_labels"].dtype)  # (batch_size, )
+        bs_label_head2 = torch.zeros_like(next_id, dtype=inputs["cont_labels"].dtype)  # (batch_size, )
+        bs_label_head1[next_mask] = valid_bs_labels_head1
+        bs_label_head2[next_mask] = valid_bs_labels_head2
+
+        bs_label_head1 = bs_label_head1.unsqueeze(1)  # (batch_size, 1)
+        bs_label_head2 = bs_label_head2.unsqueeze(1)  # (batch_size, 1)
+        td0_label, _ = torch.cat([bs_label_head1, bs_label_head2], dim=-1).max(dim=-1)  # (batch_size, )
+
+        last_label = inputs["last_label"]  # (batch_size, )
+        last_mask = cont_mask[:, 0]  # (batch_size, )
+        td0_label += last_label.masked_fill(last_mask, 0.0)  # (batch_size, )
+
+        return td0_label
+
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        outputs = model(**inputs)
-        loss = self.compute_loss_func(outputs, inputs, num_items_in_batch)
+        outputs = model(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+        )
+
+        predictions = {
+            "head1": outputs["preds_head1"].squeeze(-1),
+            "head2": outputs["preds_head2"].squeeze(-1),
+        }
+
+        if self.target_type == "mc":
+            labels = {
+                "head1": inputs["curr_label"],
+                "head2": self._compute_mc_labels(inputs),
+            }
+        elif self.target_type == "tdlambda":
+            labels = {
+                "head1": inputs["curr_label"],
+                "head2": self._compute_tdlambda_labels(model, inputs),
+            }
+        elif self.target_type == "td0":
+            labels = {
+                "head1": inputs["curr_label"],
+                "head2": self._compute_td0_labels(model, inputs),
+            }
+        else:
+            raise ValueError(f"Unsupported target type: {self.target_type}")
+
+        loss = self.compute_loss_func(predictions, labels, num_items_in_batch)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -285,10 +419,10 @@ class MultiheadTrainer(Trainer):
         inputs = self._prepare_inputs(inputs)
 
         with torch.no_grad():
-            loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
-
-            if prediction_loss_only:
-                return (loss, None, None)
+            outputs = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+            )
 
             predictions = {
                 "head1": outputs["preds_head1"].squeeze(-1),
@@ -296,22 +430,71 @@ class MultiheadTrainer(Trainer):
             }
 
             labels = {
-                "head1": inputs["labels"][:, 0],
-                "head2": inputs["labels"][:, 1],
+                "head1": inputs["curr_label"],
+                "head2": self._compute_mc_labels(inputs),
             }
 
+            loss = self.compute_loss_func(predictions, labels)
+
+        if prediction_loss_only:
+            return (loss, None, None)
         return (loss, predictions, labels)
 
 
-def compute_loss_func(outputs, inputs, num_items_in_batch=None):
+class LambdaScheduler:
+    def __init__(self, lambda_init=1.0, lambda_final=0.1, scheduler_type="none"):
+        self.lambda_init = lambda_init
+        self.lambda_final = lambda_final
+        self.scheduler_type = scheduler_type
+
+        self.total_steps = None
+        self.current_step = 0
+
+    def set_total_steps(self, total_steps):
+        self.total_steps = total_steps
+
+    def step(self):
+        self.current_step += 1
+
+    def get_lambda(self):
+        if self.total_steps is None:
+            return self.lambda_init
+
+        progress = min(self.current_step / self.total_steps, 1.0)
+
+        if self.scheduler_type == "linear":
+            return self.lambda_init - progress * (self.lambda_init - self.lambda_final)
+        elif self.scheduler_type == "exponential":
+            return self.lambda_init * (self.lambda_final / self.lambda_init) ** progress
+        elif self.scheduler_type == "cosine":
+            return self.lambda_final + 0.5 * (self.lambda_init - self.lambda_final) * (1 + np.cos(np.pi * progress))
+        elif self.scheduler_type == "none":
+            return self.lambda_init
+        else:
+            raise ValueError(f"Unsupported schedule type: {self.scheduler_type}")
+
+
+class LambdaDecayCallback(TrainerCallback):
+    def __init__(self, lambda_scheduler):
+        self.lambda_scheduler = lambda_scheduler
+
+    def on_step_end(self, args, state, control, **kwargs):
+        self.lambda_scheduler.step()
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if wandb.run is not None:
+            wandb.log({"train/lambda": self.lambda_scheduler.get_lambda()})
+
+
+def compute_loss_func(predictions, labels, num_items_in_batch=None):
     loss_fn = nn.MSELoss(reduction="sum")
-    loss_head1 = loss_fn(outputs["preds_head1"].squeeze(-1), inputs["labels"][:, 0])
-    loss_head2 = loss_fn(outputs["preds_head2"].squeeze(-1), inputs["labels"][:, 1])
+    loss_head1 = loss_fn(predictions["head1"], labels["head1"])
+    loss_head2 = loss_fn(predictions["head2"], labels["head2"])
     loss = loss_head1 + loss_head2
     if num_items_in_batch is not None:
         loss = loss / num_items_in_batch
     else:
-        loss = loss / inputs["labels"].numel()
+        loss = loss / labels["head1"].numel()
 
     return loss
 
@@ -325,7 +508,7 @@ def compute_metrics(eval_pred):
     labels_head2 = labels["head2"]
 
     y_true = (labels_head1 >= labels_head2).astype(int)
-    y_score = 1 / (1 + np.exp(-(pred_head1 - pred_head2)))
+    y_score = np.clip(pred_head1 - pred_head2 + 0.5, 0.0, 1.0)
     roc_auc = roc_auc_score(y_true, y_score)
     pr_auc = average_precision_score(y_true, y_score)
 
@@ -343,6 +526,9 @@ def parse_args():
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
     parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
+    parser.add_argument("--lambda-init", type=float, default=1.0, help="Initial Value of lambda for TD Lambda")
+    parser.add_argument("--lambda-final", type=float, default=0.1, help="Final Value of lambda for TD Lambda")
+    parser.add_argument("--lambda-scheduler-type", type=str, default="cosine", choices=["linear", "exponential", "cosine", "none"], help="TD Lambda Scheduler Type")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     parser.add_argument("--dropout-prob", type=float, default=0.1, help="Dropout probability")
     parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
@@ -358,6 +544,7 @@ def parse_args():
     parser.add_argument("--lr-scheduler-type", type=str, default="cosine", help="Learning Rate Scheduler Type")
     parser.add_argument("--warmup-ratio", type=float, default=0.1, help="Warmup Ratio")
     parser.add_argument("--weight-decay", type=float, default=0.01, help="Weight Decay")
+    parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Max Gradient Norm")
     parser.add_argument("--batch-size", type=int, default=2, help="Batch Size")
     parser.add_argument("--gradient-accumulation-steps", type=int, default=32, help="Gradient Accumulation Steps")
     parser.add_argument("--gradient-checkpointing", action="store_true", help="Use Gradient Checkpointing")
@@ -369,6 +556,7 @@ def parse_args():
     parser.add_argument("--logging-steps", type=int, default=10, help="Logging Steps")
     parser.add_argument("--deepspeed-config", type=str, default="Training/deepspeed_config.json", help="DeepSpeed Configuration File Path")
     parser.add_argument("--ddp-find-unused-parameters", action="store_true", help="Find unused parameters in DDP")
+    parser.add_argument("--target-type", type=str, default="tdlambda", choices=["mc", "tdlambda", "td0"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
@@ -419,7 +607,6 @@ def main(args):
         config,
         encoder_kwargs={
             "device_map": {"": local_rank},
-            "max_position_embeddings": args.max_length,
         },
         inference_mode=False,
     )
@@ -440,6 +627,7 @@ def main(args):
         lr_scheduler_type=args.lr_scheduler_type,
         warmup_ratio=args.warmup_ratio,
         weight_decay=args.weight_decay,
+        max_grad_norm=args.max_grad_norm,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -451,7 +639,7 @@ def main(args):
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
         logging_steps=args.logging_steps,
-        label_names=["labels"],
+        label_names=["curr_label", "cont_labels", "cont_mask", "cont_ids", "last_label"],
         deepspeed=args.deepspeed_config,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
         report_to=None if args.disable_wandb else ["wandb"],
@@ -466,7 +654,17 @@ def main(args):
     eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
+    lambda_scheduler = LambdaScheduler(
+        lambda_init=args.lambda_init,
+        lambda_final= args.lambda_final,
+        scheduler_type=args.lambda_scheduler_type,
+    )
+
+    lambda_decay_callback = LambdaDecayCallback(lambda_scheduler)
+
     trainer = MultiheadTrainer(
+        target_type=args.target_type,
+        lambda_scheduler=lambda_scheduler,
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -474,6 +672,7 @@ def main(args):
         compute_loss_func=compute_loss_func,
         compute_metrics=compute_metrics,
         processing_class=tokenizer,
+        callbacks=[lambda_decay_callback],
     )
 
     trainer.train()
