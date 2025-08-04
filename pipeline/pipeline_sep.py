@@ -4,11 +4,13 @@ import json
 import random as rd
 import argparse
 from typing import List, Dict, Any, Tuple
+from tqdm import tqdm
 import torch
+from transformers import set_seed
 from vllm import LLM
 import wandb
 
-from config import WANDB_ENTITY, DEBERTA_MAX_LENGTH
+from config import WANDB_ENTITY, DEBERTA_MAX_LENGTH, DATASET_PATHS, DATASET_FIELDS
 from .utils import print_metrics, compute_retrieval_metrics, compute_answer_metrics, compute_all_answer_metrics
 from .modules import AsyncOpenAIConfig
 from .contriever import Retriever
@@ -30,9 +32,9 @@ def run_batch(
     max_search: int = 10,
     traces_path: str = None,
     stop_log_path: str = None,
-    log_trace: bool = False
+    log_trace: bool = False,
+    fields: Dict[str, str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[List[Dict[str, Any]]], List[str], Dict[str, List[List[float]]]]:
-
     final_questions = []
     final_batch_history = []
     final_traces = []
@@ -46,13 +48,13 @@ def run_batch(
     while questions:
         start_time = time.time()
 
-        new_traces, search_queries = query_generator.batch_generate(questions, traces)
+        new_traces, search_queries = query_generator.batch_generate(questions, traces, fields)
         traces = new_traces
 
         if log_trace:
             print(f"\n========== Iteration {iter_count + 1} ==========")
             for q, query, tr in zip(questions, search_queries, traces):
-                print(f"[TRACE] Question: {q['question']}")
+                print(f"[TRACE] Question: {q[fields['question']]}")
                 print(f"|  Generated Query: {query}")
                 print(f"|  Current Trace:{tr}\n")
 
@@ -77,8 +79,8 @@ def run_batch(
         inter_answers = intermediate_answer_generator.batch_generate_intermediate_answers(search_queries, selected_docs)
         if log_trace:
             for question, query, doc, answer in zip(questions, search_queries, selected_docs, inter_answers):
-                print(f"[TRACE] QID={question['id']} - Intermediate Answer Generation")
-                print(f"|  Question: {question['question']}")
+                print(f"[TRACE] QID={question[fields['id']]} - Intermediate Answer Generation")
+                print(f"|  Question: {question[fields['question']]}")
                 print(f"|  Query: {query}")
                 print(f"|  Document: {doc['text'][:100]}...")
                 print(f"|  Generated Intermediate Answer: {answer}")
@@ -88,7 +90,7 @@ def run_batch(
             trace + f"\nDocument: {doc['text']}\nIntermediate answer: {answer}"
             for trace, doc, answer in zip(traces, selected_docs, inter_answers)
         ]
-        stop_decisions = stop_decider.batch_decide(questions, traces)
+        stop_decisions = stop_decider.batch_decide(questions, traces, fields, log_trace)
 
         next_questions = []
         next_batch_history = []
@@ -96,7 +98,7 @@ def run_batch(
 
         for question, history, trace, decision in zip(questions, batch_history, traces, stop_decisions):
             if log_trace:
-                print(f"[TRACE] QID={question['id']} - Stop Decision: {decision}")
+                print(f"[TRACE] QID={question[fields['id']]} - Stop Decision: {decision}")
 
             if decision == "STOP":
                 final_questions.append(question)
@@ -104,8 +106,8 @@ def run_batch(
                 final_traces.append(trace)
 
                 stop_logs.append({
-                    "question_id": question["id"],
-                    "gold_hop": len(question.get("question_decomposition", [])),
+                    "question_id": question[fields["id"]],
+                    "gold_hop": len(question.get(fields["supporting_facts"], [])),
                     "stop_iter": iter_count + 1
                 })
             else:
@@ -132,44 +134,44 @@ def run_batch(
 
                 for question in questions:
                     stop_logs.append({
-                        "question_id": question["id"],
-                        "gold_hop": len(question.get("question_decomposition", [])),
+                        "question_id": question[fields["id"]],
+                        "gold_hop": len(question.get(fields["supporting_facts"], [])),
                         "stop_iter": iter_count
                     })
             break
 
-    final_traces, final_predictions = final_answer_generator.batch_generate_final_answers(final_questions, final_traces)
+    final_traces, final_predictions = final_answer_generator.batch_generate_final_answers(final_questions, final_traces, fields)
 
     if log_trace:
         print("\nFinal Questions and History:\n")
         for question, history, prediction in zip(final_questions, final_batch_history, final_predictions):
-            print(f"1. Question: {question['question']}")
+            print(f"1. Question: {question[fields['question']]}")
             print("2. History:")
             for doc in history:
                 print(f"  Passage: {doc['text']}")
             print(f"3. Prediction: {prediction}")
             print()
 
-    em_list, precision_list, recall_list, f1_list = compute_retrieval_metrics(final_questions, final_batch_history, stop_logs)
+    em_list, precision_list, recall_list, f1_list = compute_retrieval_metrics(final_questions, final_batch_history, stop_logs, fields)
 
     if stop_log_path:
         with open(stop_log_path, 'a', encoding='utf-8') as f:
             for log in stop_logs:
                 f.write(json.dumps(log, ensure_ascii=False) + '\n')
 
-    ans_em_list, ans_f1_list = compute_answer_metrics(final_questions, final_predictions)
+    ans_em_list, ans_f1_list = compute_answer_metrics(final_questions, final_predictions, fields)
 
     if traces_path:
-        all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions)
+        all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions, fields)
         with open(traces_path, 'a', encoding='utf-8') as f:
             for question, trace, prediction, em, f1 in zip(
                 final_questions, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list
             ):
                 info = {
-                    "question_id": question["id"],
-                    "question": question.get("question", ""),
-                    "answer": question.get("answer", ""),
-                    "answer_aliases": question.get("answer_aliases", []),
+                    "question_id": question[fields["id"]],
+                    "question": question.get(fields["question"], ""),
+                    "answer": question.get(fields["answer"], ""),
+                    "answer_aliases": question.get(fields["answer_aliases"], []),
                     "trace": trace,
                     "prediction": prediction,
                     "em": em,
@@ -194,9 +196,9 @@ def run_batch(
     if log_trace and final_questions:
         print("\n========== Final Results ==========")
         for q, hist, trace, pred in zip(final_questions, final_batch_history, final_traces, final_predictions):
-            print(f"\nQID: {q['id']}")
-            print(f"Question: {q['question']}")
-            print(f"Gold Answer: {q.get('answer', 'N/A')}")
+            print(f"\nQID: {q[fields['id']]}")
+            print(f"Question: {q[fields['question']]}")
+            print(f"Gold Answer: {q.get(fields['answer'], 'N/A')}")
             print(f"Prediction: {pred}")
             print(f"Number of Documents Retrieved: {len(hist)}")
             print("-" * 80)
@@ -258,7 +260,8 @@ def parse_args():
     stop_decider_group.add_argument("--sd-provider", type=str, default="vllm", choices=["vllm", "openai", "nostop"], help="Provider for stop decider")
 
     main_group = parser.add_argument_group("Main Options")
-    main_group.add_argument("--questions", type=str, required=True, help="Questions file path")
+    main_group.add_argument("--dataset", type=str, default="musique", choices=DATASET_PATHS.keys(), help="Dataset name")
+    main_group.add_argument("--dataset-path", type=str, help="Dataset file path")
     main_group.add_argument("--batch-size", type=int, default=32, help="Batch size for processing questions")
     main_group.add_argument("--max-iterations", type=int, default=5, help="Maximum number of iterations")
     main_group.add_argument("--max-search", type=int, default=10, help="Maximum number of passages to retrieve")
@@ -266,17 +269,18 @@ def parse_args():
     main_group.add_argument("--output-path", type=str, help="Path to save predictions and metrics")
     main_group.add_argument("--stop-log-path", type=str, default=None, help="Optional JSONL path; Path to the JSONL file where stopping logs are written")
     main_group.add_argument("--log-trace", action="store_true", help="Enable detailed trace logging")
+    parser.add_argument("--seed", type=int, default=42, help="Random Seed")
 
     args = parser.parse_args()
     return args
 
 
 def main(args: argparse.Namespace):
-    rd.seed(42)
+    set_seed(args.seed)
 
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if local_rank in [-1, 0]:
-        wandb.init(project="MultiHopQA-test", entity=WANDB_ENTITY)
+        wandb.init(project="MultiHopQA-test", entity=WANDB_ENTITY, config=args)
     else:
         os.environ["WANDB_MODE"] = "disabled"
 
@@ -352,10 +356,14 @@ def main(args: argparse.Namespace):
     if args.stop_log_path:
         open(args.stop_log_path, "w", encoding="utf-8").close()
 
-    with open(args.questions, "r", encoding="utf-8") as f:
+    dataset_path = args.dataset_path or DATASET_PATHS[args.dataset]
+    with open(dataset_path, "r", encoding="utf-8") as f:
         questions = f.readlines()
+        if len(questions) == 1:
+            questions = json.loads(questions[0])
+        else:
+            questions = [json.loads(q) for q in questions]
         rd.shuffle(questions)
-        questions = [json.loads(q) for q in questions]
 
     all_metrics = {
         "retrieval": {
@@ -375,7 +383,7 @@ def main(args: argparse.Namespace):
     all_final_batch_history = []
 
     total_batches = (len(questions) + args.batch_size - 1) // args.batch_size
-    for i in range(0, len(questions), args.batch_size):
+    for i in tqdm(range(0, len(questions), args.batch_size)):
         batch_questions = questions[i:i + args.batch_size]
         print(f"\nProcessing batch {i // args.batch_size + 1} of {total_batches}...\n")
 
@@ -391,7 +399,8 @@ def main(args: argparse.Namespace):
             max_search=args.max_search,
             traces_path=args.traces_path,
             stop_log_path=args.stop_log_path,
-            log_trace=args.log_trace
+            log_trace=args.log_trace,
+            fields=DATASET_FIELDS[args.dataset],
         )
 
         all_final_questions.extend(final_questions)
@@ -405,15 +414,15 @@ def main(args: argparse.Namespace):
                         batch_metrics[metric_type][metric_name][hop_idx]
                     )
 
-        print("\n===== BATCH RETRIEVAL METRICS =====")
-        print_metrics(batch_metrics["retrieval"]["em"], "EM")
-        print_metrics(batch_metrics["retrieval"]["precision"], "Precision")
-        print_metrics(batch_metrics["retrieval"]["recall"], "Recall")
-        print_metrics(batch_metrics["retrieval"]["f1"], "F1")
+        print("\n===== CUMULATIVE RETRIEVAL METRICS =====")
+        print_metrics(all_metrics["retrieval"]["em"], "EM")
+        print_metrics(all_metrics["retrieval"]["precision"], "Precision")
+        print_metrics(all_metrics["retrieval"]["recall"], "Recall")
+        print_metrics(all_metrics["retrieval"]["f1"], "F1")
 
-        print("\n===== BATCH ANSWER METRICS =====")
-        print_metrics(batch_metrics["answer"]["em"], "EM")
-        print_metrics(batch_metrics["answer"]["f1"], "F1")
+        print("\n===== CUMULATIVE ANSWER METRICS =====")
+        print_metrics(all_metrics["answer"]["em"], "EM")
+        print_metrics(all_metrics["answer"]["f1"], "F1")
 
     print("\n===== FINAL RETRIEVAL METRICS =====")
     print_metrics(all_metrics["retrieval"]["em"], "EM")

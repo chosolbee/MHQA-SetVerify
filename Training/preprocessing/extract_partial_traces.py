@@ -43,6 +43,11 @@ if __name__ == "__main__":
                         "trace": partial_trace.strip(),
                         "iter_cnt": iter_cnt,
                     }, ensure_ascii=False) + "\n")
+            if line.startswith("Final answer: "):
+                break
+
+        if iter_cnt > 10:
+            print(f"Warning: More than 10 iterations for question_id {question_id}. This may indicate an issue with the trace.")
 
     print(f"Dataset Size: {cnt}")
     print("Extraction completed successfully.")

@@ -73,10 +73,15 @@ if __name__ == "__main__":
             "answer_aliases": trace["answers"][1:],
         } for trace in batch_traces_repeated]
 
-        outputs = model.chat(batch_prompts_repeated, sampling_params)
+        outputs = model.chat(batch_prompts_repeated, sampling_params, use_tqdm=False)
         batch_predictions_repeated = [output.outputs[0].text.strip() for output in outputs]
 
-        em_list, f1_list = compute_all_answer_metrics(batch_answers_repeated, batch_predictions_repeated)
+        fields = {
+            "answer": "answer",
+            "answer_aliases": "answer_aliases",
+        }
+
+        em_list, f1_list = compute_all_answer_metrics(batch_answers_repeated, batch_predictions_repeated, fields)
 
         avg_em_list = np.mean(np.array(em_list).reshape(-1, args.repeat_size), axis=1)
         avg_f1_list = np.mean(np.array(f1_list).reshape(-1, args.repeat_size), axis=1)
