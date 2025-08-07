@@ -6,8 +6,11 @@ from tqdm import tqdm
 from config import DATASET_PATHS
 
 
-def build_hotpotqa_corpus(input_path, output_path):
-    with tarfile.open(input_path, mode="r|bz2") as tar, open(output_path, "w", encoding="utf-8") as out:
+def build_hotpotqa_corpus(input_path):
+    corpus_path = DATASET_PATHS["hotpotqa"]["passages"]
+
+    with tarfile.open(input_path, mode="r|bz2") as tar, \
+         open(corpus_path, "w", encoding="utf-8") as out:
         for member in tar:
             print(f"Processing {member.name}...")
 
@@ -44,14 +47,15 @@ def build_hotpotqa_corpus(input_path, output_path):
                 out.write(json.dumps(obj, ensure_ascii=False))
                 out.write("\n")
 
-    print("Generated corpus for HotpotQA in", output_path)
+    print("Generated corpus for HotpotQA in", corpus_path)
 
 
-def build_2wikimultihopqa_corpus(output_path):
-    dataset_paths = DATASET_PATHS["2wikimultihopqa"].values()
+def build_2wikimultihopqa_corpus():
+    dataset_paths = DATASET_PATHS["2wikimultihopqa"]
     corpus = {}
 
-    for dataset_path in dataset_paths:
+    for dataset_type in ["train", "dev", "test"]:
+        dataset_path = dataset_paths[dataset_type]
         with open(dataset_path, "r", encoding="utf-8") as f:
             dataset = json.load(f)
 
@@ -80,18 +84,19 @@ def build_2wikimultihopqa_corpus(output_path):
 
     print(f"Generated corpus with {len(corpus)} unique documents.")
 
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(dataset_paths["passages"], "w", encoding="utf-8") as f:
         for doc in corpus.values():
             f.write(json.dumps(doc) + "\n")
 
-    print("Generated corpus for 2WikiMultiHopQA in", output_path)
+    print("Generated corpus for 2WikiMultiHopQA in", dataset_paths["passages"])
 
 
-def build_musique_corpus(output_path):
-    dataset_paths = DATASET_PATHS["musique"].values()
+def build_musique_corpus():
+    dataset_paths = DATASET_PATHS["musique"]
     corpus = {}
 
-    for dataset_path in dataset_paths:
+    for dataset_type in ["train", "dev", "test"]:
+        dataset_path = dataset_paths[dataset_type]
         with open(dataset_path, "r", encoding="utf-8") as f:
             dataset = [json.loads(line.strip()) for line in f]
 
@@ -120,18 +125,17 @@ def build_musique_corpus(output_path):
 
     print(f"Generated corpus with {len(corpus)} unique documents.")
 
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(dataset_paths["passages"], "w", encoding="utf-8") as f:
         for doc in corpus.values():
             f.write(json.dumps(doc) + "\n")
 
-    print(f"Generated corpus for 2WikiMultiHopQA in", output_path)
+    print("Generated corpus for MuSiQue in", dataset_paths["passages"])
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Make Corpus from Dataset")
     parser.add_argument("--dataset", type=str, required=True, choices=["hotpotqa", "2wikimultihopqa", "musique"], help="Dataset name")
     parser.add_argument("--input-path", type=str, help="Input path for the dataset (if needed)")
-    parser.add_argument("--output-path", type=str, required=True, help="Output file path for the corpus")
     return parser.parse_args()
 
 
@@ -139,10 +143,10 @@ if __name__ == "__main__":
     args = parse_args()
 
     if args.dataset == "hotpotqa":
-        build_hotpotqa_corpus(args.input_path, args.output_path)
+        build_hotpotqa_corpus(args.input_path)
     elif args.dataset == "2wikimultihopqa":
-        build_2wikimultihopqa_corpus(args.output_path)
+        build_2wikimultihopqa_corpus()
     elif args.dataset == "musique":
-        build_musique_corpus(args.output_path)
+        build_musique_corpus()
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")

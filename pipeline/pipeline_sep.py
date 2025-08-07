@@ -207,8 +207,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     retriever_group = parser.add_argument_group("Retriever Options")
-    retriever_group.add_argument("--passages", type=str, required=True, help="document file path")
-    retriever_group.add_argument("--embeddings", type=str, required=True, help="Document embedding path")
+    retriever_group.add_argument("--passages", type=str, help="document file path")
+    retriever_group.add_argument("--embeddings", type=str, help="Document embedding path")
 
     vllm_group = parser.add_argument_group("vLLM Options")
     vllm_group.add_argument("--vllm-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for vLLM")
@@ -258,8 +258,8 @@ def parse_args():
     stop_decider_group.add_argument("--sd-provider", type=str, default="vllm", choices=["vllm", "openai", "nostop"], help="Provider for stop decider")
 
     main_group = parser.add_argument_group("Main Options")
-    main_group.add_argument("--dataset", type=str, default="musique", choices=DATASET_PATHS.keys(), help="Dataset name")
-    main_group.add_argument("--dataset-type", type=str, default="dev", choices=["train", "dev", "test"], help="Dataset type")
+    main_group.add_argument("--dataset", type=str, required=True, choices=DATASET_PATHS.keys(), help="Dataset name")
+    main_group.add_argument("--dataset-type", type=str, required=True, choices=["train", "dev", "test"], help="Dataset type")
     main_group.add_argument("--dataset-path", type=str, help="Dataset file path")
     main_group.add_argument("--batch-size", type=int, default=32, help="Batch size for processing questions")
     main_group.add_argument("--max-iterations", type=int, default=5, help="Maximum number of iterations")
@@ -283,9 +283,12 @@ def main(args: argparse.Namespace):
     else:
         os.environ["WANDB_MODE"] = "disabled"
 
+    passages = args.passages or DATASET_PATHS[args.dataset]["passages"]
+    embeddings = args.embeddings or DATASET_PATHS[args.dataset]["embeddings"]
+
     retriever = Retriever(
-        args.passages,
-        args.embeddings,
+        passages,
+        embeddings,
         model_type="contriever",
         model_path="facebook/contriever-msmarco",
     )
