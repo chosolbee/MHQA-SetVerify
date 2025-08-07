@@ -2,6 +2,7 @@ import json
 import pickle
 import os
 import sys
+import argparse
 from typing import List, Union, Dict, Any
 from rank_bm25 import BM25Okapi
 import re
