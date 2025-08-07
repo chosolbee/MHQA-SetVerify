@@ -51,13 +51,6 @@ def run_batch(
         new_traces, search_queries = query_generator.batch_generate(questions, traces, fields)
         traces = new_traces
 
-        if log_trace:
-            print(f"\n========== Iteration {iter_count + 1} ==========")
-            for q, query, tr in zip(questions, search_queries, traces):
-                print(f"[TRACE] Question: {q[fields['question']]}")
-                print(f"|  Generated Query: {query}")
-                print(f"|  Current Trace:{tr}\n")
-
         search_batch_size = 16
         batch_docs = []
         for i in range(0, len(search_queries), search_batch_size):
@@ -77,29 +70,28 @@ def run_batch(
             selected_docs.append(selected_doc)
 
         inter_answers = intermediate_answer_generator.batch_generate_intermediate_answers(search_queries, selected_docs)
-        if log_trace:
-            for question, query, doc, answer in zip(questions, search_queries, selected_docs, inter_answers):
-                print(f"[TRACE] QID={question[fields['id']]} - Intermediate Answer Generation")
-                print(f"|  Question: {question[fields['question']]}")
-                print(f"|  Query: {query}")
-                print(f"|  Document: {doc['text'][:100]}...")
-                print(f"|  Generated Intermediate Answer: {answer}")
-                print()
 
         traces = [
-            trace + f"\nDocument: {doc['text']}\nIntermediate answer: {answer}"
+            trace + f"\nDocument: {doc['title']}: {doc['text']}\nIntermediate answer: {answer}"
             for trace, doc, answer in zip(traces, selected_docs, inter_answers)
         ]
         stop_decisions = stop_decider.batch_decide(questions, traces, fields, log_trace)
+
+        if log_trace:
+            print(f"\n========== Iteration {iter_count + 1} ==========")
+            for question, query, doc, answer, decision in zip(questions, search_queries, selected_docs, inter_answers, stop_decisions):
+                print(f"[TRACE] QID={question[fields['id']]}")
+                print(f"|  Question: {question[fields['question']]}")
+                print(f"|  Query: {query}")
+                print(f"|  Document: {doc['title']}: {doc['text'][:100]}...")
+                print(f"|  Generated Intermediate Answer: {answer}\n")
+                print(f"|  Stop Decision: {decision}\n")
 
         next_questions = []
         next_batch_history = []
         next_traces = []
 
         for question, history, trace, decision in zip(questions, batch_history, traces, stop_decisions):
-            if log_trace:
-                print(f"[TRACE] QID={question[fields['id']]} - Stop Decision: {decision}")
-
             if decision == "STOP":
                 final_questions.append(question)
                 final_batch_history.append(history)
@@ -140,15 +132,18 @@ def run_batch(
                     })
             break
 
-    final_traces, final_predictions = final_answer_generator.batch_generate_final_answers(final_questions, final_traces, fields)
+    if final_answer_generator is not None:
+        final_traces, final_predictions = final_answer_generator.batch_generate_final_answers(final_questions, final_traces, fields)
+    else:
+        final_predictions = [""] * len(final_questions)
 
     if log_trace:
-        print("\nFinal Questions and History:\n")
+        print("\n========== Final Questions and History ==========")
         for question, history, prediction in zip(final_questions, final_batch_history, final_predictions):
             print(f"1. Question: {question[fields['question']]}")
             print("2. History:")
             for doc in history:
-                print(f"  Passage: {doc['text']}")
+                print(f"|  {doc['title']}: {doc['text']}")
             print(f"3. Prediction: {prediction}")
             print()
 
@@ -164,15 +159,17 @@ def run_batch(
     if traces_path:
         all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions, fields)
         with open(traces_path, 'a', encoding='utf-8') as f:
-            for question, trace, prediction, em, f1 in zip(
-                final_questions, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list
+            for question, batch_history, trace, prediction, em, f1 in zip(
+                final_questions, final_batch_history, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list
             ):
                 info = {
                     "question_id": question[fields["id"]],
                     "question": question.get(fields["question"], ""),
+                    "gold_hop": len(question.get(fields["supporting_facts"], [])),
                     "answer": question.get(fields["answer"], ""),
                     "answer_aliases": question.get(fields["answer_aliases"], []),
                     "trace": trace,
+                    "retrieval_history": [question[fields["id"]] + "-sf" in doc["id"] for doc in batch_history],
                     "prediction": prediction,
                     "em": em,
                     "f1": f1,
@@ -218,7 +215,7 @@ def parse_args():
     vllm_group.add_argument("--vllm-tp-size", type=int, default=1, help="Tensor parallel size for vLLM")
     vllm_group.add_argument("--vllm-quantization", type=str, help="Quantization method for vLLM")
     vllm_group.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.9, help="GPU memory utilization for vLLM")
-    vllm_group.add_argument("--vllm-max-model-len", type=int, default=8192, help="Maximum model length for vLLM")
+    vllm_group.add_argument("--vllm-max-model-len", type=int, help="Maximum model length for vLLM")
 
     openai_group = parser.add_argument_group("OpenAI Options")
     openai_group.add_argument("--openai-model-id", type=str, default="gpt-4o-mini-2024-07-18", help="Model ID for OpenAI")
@@ -252,6 +249,7 @@ def parse_args():
     final_answer_generator_group.add_argument("--fag-temperature", type=float, default=0.7, help="Temperature for answer generator")
     final_answer_generator_group.add_argument("--fag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
     final_answer_generator_group.add_argument("--fag-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for answer generator")
+    final_answer_generator_group.add_argument("--fag-disable", action="store_true", help="Disable final answer generation")
 
     stop_decider_group = parser.add_argument_group("Stop Decider Options")
     stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=200, help="Maximum generation length for stop decider")
@@ -261,6 +259,7 @@ def parse_args():
 
     main_group = parser.add_argument_group("Main Options")
     main_group.add_argument("--dataset", type=str, default="musique", choices=DATASET_PATHS.keys(), help="Dataset name")
+    main_group.add_argument("--dataset-type", type=str, default="dev", choices=["train", "dev", "test"], help="Dataset type")
     main_group.add_argument("--dataset-path", type=str, help="Dataset file path")
     main_group.add_argument("--batch-size", type=int, default=32, help="Batch size for processing questions")
     main_group.add_argument("--max-iterations", type=int, default=5, help="Maximum number of iterations")
@@ -269,7 +268,7 @@ def parse_args():
     main_group.add_argument("--output-path", type=str, help="Path to save predictions and metrics")
     main_group.add_argument("--stop-log-path", type=str, default=None, help="Optional JSONL path; Path to the JSONL file where stopping logs are written")
     main_group.add_argument("--log-trace", action="store_true", help="Enable detailed trace logging")
-    parser.add_argument("--seed", type=int, default=42, help="Random Seed")
+    main_group.add_argument("--seed", type=int, default=42, help="Random Seed")
 
     args = parser.parse_args()
     return args
@@ -334,13 +333,15 @@ def main(args: argparse.Namespace):
         provider=args.iag_provider,
     )
 
-    final_answer_generator = AnswerGenerator(
-        llm=vllm_agent if args.fag_provider == "vllm" else openai_config,
-        max_gen_length=args.fag_max_gen_length,
-        temperature=args.fag_temperature,
-        top_p=args.fag_top_p,
-        provider=args.fag_provider,
-    )
+    final_answer_generator = None
+    if not args.fag_disable:
+        final_answer_generator = AnswerGenerator(
+            llm=vllm_agent if args.fag_provider == "vllm" else openai_config,
+            max_gen_length=args.fag_max_gen_length,
+            temperature=args.fag_temperature,
+            top_p=args.fag_top_p,
+            provider=args.fag_provider,
+        )
 
     stop_decider = StopDecider(
         llm=vllm_agent if args.sd_provider == "vllm" else (openai_config if args.sd_provider == "openai" else None),
@@ -356,13 +357,12 @@ def main(args: argparse.Namespace):
     if args.stop_log_path:
         open(args.stop_log_path, "w", encoding="utf-8").close()
 
-    dataset_path = args.dataset_path or DATASET_PATHS[args.dataset]
+    dataset_path = args.dataset_path or DATASET_PATHS[args.dataset][args.dataset_type]
     with open(dataset_path, "r", encoding="utf-8") as f:
-        questions = f.readlines()
-        if len(questions) == 1:
-            questions = json.loads(questions[0])
+        if args.dataset == "musique":
+            questions = [json.loads(line.strip()) for line in f]
         else:
-            questions = [json.loads(q) for q in questions]
+            questions = json.load(f)
         rd.shuffle(questions)
 
     all_metrics = {
