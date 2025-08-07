@@ -3,7 +3,7 @@ import time
 import json
 import random as rd
 import argparse
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Union
 import torch
 from vllm import LLM
 import wandb
@@ -12,6 +12,7 @@ from config import WANDB_ENTITY, DEBERTA_MAX_LENGTH
 from .utils import print_metrics, compute_retrieval_metrics, compute_answer_metrics, compute_all_answer_metrics
 from .modules import AsyncOpenAIConfig
 from .contriever import Retriever
+from .bm25.bm25_retriever import BM25Retriever
 from .query_generator.query_generator_sep import QueryGenerator
 from .verifier import Reranker
 from .answer_generator.answer_generator_sep import AnswerGenerator
@@ -19,7 +20,7 @@ from .stop_decider import StopDecider
 
 
 def run_batch(
-    retriever: Retriever,
+    retriever: Union[Retriever, BM25Retriever],
     query_generator: QueryGenerator,
     reranker: Reranker,
     intermediate_answer_generator: AnswerGenerator,
@@ -209,7 +210,13 @@ def parse_args():
 
     retriever_group = parser.add_argument_group("Retriever Options")
     retriever_group.add_argument("--passages", type=str, required=True, help="document file path")
-    retriever_group.add_argument("--embeddings", type=str, required=True, help="Document embedding path")
+    retriever_group.add_argument("--embeddings", type=str, help="Contriever document embedding path")
+    retriever_group.add_argument("--retriever-type", type=str, default="contriever", choices=["contriever", "bm25"], help="Type of retriever to use")
+
+    retriever_group.add_argument("--bm25-k1", type=float, default=1.5, help="BM25 k1 parameter")
+    retriever_group.add_argument("--bm25-b", type=float, default=0.8, help="BM25 b parameter")
+    retriever_group.add_argument("--bm25-epsilon", type=float, default=0.2, help="BM25 epsilon parameter")
+
 
     vllm_group = parser.add_argument_group("vLLM Options")
     vllm_group.add_argument("--vllm-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for vLLM")
@@ -280,12 +287,27 @@ def main(args: argparse.Namespace):
     else:
         os.environ["WANDB_MODE"] = "disabled"
 
-    retriever = Retriever(
-        args.passages,
-        args.embeddings,
-        model_type="contriever",
-        model_path="facebook/contriever-msmarco",
-    )
+    if args.retriever_type == "contriever":
+        if not args.embeddings:
+            raise ValueError("--embeddings path is required when using contriever retriever")
+        
+        retriever = Retriever(
+            args.passages,
+            args.embeddings,
+            model_type="contriever",
+            model_path="facebook/contriever-msmarco",
+        )
+
+    elif args.retriever_type == "bm25":
+        retriever = BM25Retriever(
+            args.passages,
+            k1=args.bm25_k1,
+            b=args.bm25_b,
+            epsilon=args.bm25_epsilon,
+        )
+
+    else:
+        raise ValueError(f"Unknown retriever type: {args.retriever_type}")
 
     vllm_agent = LLM(
         model=args.vllm_model_id,
