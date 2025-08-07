@@ -6,8 +6,9 @@ from tqdm import tqdm
 import numpy as np
 import torch
 from vllm import LLM, SamplingParams
+from ..utils import extract_documents_only
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
-from pipeline.answer_generator.prompts import gen_final_answer_prompt
+from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
 from pipeline.utils import compute_all_answer_metrics
 
 
@@ -17,13 +18,14 @@ def parse_args():
     parser.add_argument("--output-path", type=str, required=True, help="Path to the output JSONL file")
     parser.add_argument("--batch-size", type=int, default=512, help="Batch size for processing")
     parser.add_argument("--repeat-size", type=int, default=8, help="Number of times to repeat each trace")
+    parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
 
     vllm_group = parser.add_argument_group("vLLM Options")
     vllm_group.add_argument("--vllm-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for vLLM")
     vllm_group.add_argument("--vllm-tp-size", type=int, default=1, help="Tensor parallel size for vLLM")
     vllm_group.add_argument("--vllm-quantization", type=str, help="Quantization method for vLLM")
     vllm_group.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.9, help="GPU memory utilization for vLLM")
-    vllm_group.add_argument("--vllm-max-model-len", type=int, default=8192, help="Maximum model length for vLLM")
+    vllm_group.add_argument("--vllm-max-model-len", type=int, help="Maximum model length for vLLM")
 
     final_answer_generator_group = parser.add_argument_group("Final Answer Generator Options")
     final_answer_generator_group.add_argument("--fag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
@@ -67,7 +69,13 @@ if __name__ == "__main__":
     for i in tqdm(range(0, len(traces), effective_batch_size)):
         batch_traces = traces[i:i+effective_batch_size]
         batch_traces_repeated = [trace for trace in batch_traces for _ in range(args.repeat_size)]
-        batch_prompts_repeated = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces_repeated]
+        if args.use_docs_only:
+            batch_prompts_repeated = [
+                gen_final_answer_docs_only_prompt(trace["question"], extract_documents_only(trace["trace"]))
+                for trace in batch_traces_repeated
+            ]
+        else:
+            batch_prompts_repeated = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces_repeated]
         batch_answers_repeated = [{
             "answer": trace["answers"][0],
             "answer_aliases": trace["answers"][1:],

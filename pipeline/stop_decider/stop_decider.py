@@ -2,12 +2,12 @@ import os
 import sys
 import asyncio
 from typing import List, Dict, Any
-from .prompts import STOP_DECISION_SYSTEM_PROMPT
+from .prompts import gen_stop_decision_prompt, gen_stop_decision_docs_only_prompt
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from modules import AsyncOpenAIProcessor
 
 class StopDecider:
-    def __init__(self, llm, max_gen_length=200, temperature=0.3, top_p=0.9, provider="vllm"):
+    def __init__(self, llm, max_gen_length=200, temperature=0.3, top_p=0.9, provider="vllm", use_docs_only=False):
         os.environ['MKL_THREADING_LAYER']='GNU'
 
         self.llm = llm
@@ -21,33 +21,9 @@ class StopDecider:
         if self.provider == "vllm" and llm is not None:
             self.tokenizer = llm.get_tokenizer()
 
+        self.use_docs_only = use_docs_only
+
         print(f"Stop Decider - {self.provider} initialized successfully.")
-
-    def _gen_stop_decision_prompt(self, question, trace):
-        chat = [
-            {
-                "role": "system",
-                "content": STOP_DECISION_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": question.strip(),
-            },
-            {
-                "role": "assistant",
-                "content": trace.strip(),
-            },
-        ]
-
-        if self.provider == "vllm":
-            prompt = self.tokenizer.apply_chat_template(
-                chat,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            return prompt
-        else:
-            return chat
 
     def _process_prompts_vllm(self, prompts):
         from vllm import SamplingParams
@@ -57,7 +33,7 @@ class StopDecider:
             temperature=self.temperature,
             top_p=self.top_p,
         )
-        outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
+        outputs = self.llm.chat(prompts, sampling_params, use_tqdm=False)
 
         return [output.outputs[0].text.strip() for output in outputs]
 
@@ -117,7 +93,16 @@ class StopDecider:
                 decisions.append(decision)
             return decisions
 
-        prompts = [self._gen_stop_decision_prompt(question[fields["question"]], trace) for question, trace in zip(questions, traces)]
+        if self.use_docs_only:
+            prompts = [
+                gen_stop_decision_docs_only_prompt(question[fields["question"]], trace)
+                for question, trace in zip(questions, traces)
+            ]
+        else:
+            prompts = [
+                gen_stop_decision_prompt(question[fields["question"]], trace)
+                for question, trace in zip(questions, traces)
+            ]
 
         if self.provider == "vllm":
             outputs = self._process_prompts_vllm(prompts)
