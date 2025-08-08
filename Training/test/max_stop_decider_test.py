@@ -1,6 +1,10 @@
 import argparse
 import pandas as pd
 
+COLUMNS = ["em", "f1", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1"]
+
+pd.set_option('display.max_columns', None)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Compute max test metrics from the dataset")
@@ -20,34 +24,24 @@ if __name__ == "__main__":
 
     print("\n=== MAX ===")
 
-    result = df.groupby('question_id').agg({
-        'em': 'max',
-        'f1': 'max'
-    }).reset_index()
-
-    result['num_hops'] = result['question_id'].str[0]
+    result = df.groupby('question_id').agg({**{column: "max" for column in COLUMNS}, "num_hops": "first"}).reset_index()
 
     print("\nDetailed summary (max):")
-    summary = result.groupby('num_hops')[['em', 'f1']].agg(['mean', 'count'])
+    summary = result.groupby('num_hops')[COLUMNS].agg(['mean', 'count'])
     print(summary)
 
-    overall_averages = result[['em', 'f1']].mean()
+    overall_averages = result[COLUMNS].mean()
     print("\nOverall averages (max):")
     print(overall_averages)
 
     print("\n=== NO STOP ===")
 
-    result = df.groupby('question_id').agg({
-        'em': 'last',
-        'f1': 'last'
-    }).reset_index()
-
-    result['num_hops'] = result['question_id'].str[0]
+    result = df.groupby('question_id').agg({**{column: "last" for column in COLUMNS}, "num_hops": "first"}).reset_index()
 
     print("\nDetailed summary (no stop):")
-    summary = result.groupby('num_hops')[['em', 'f1']].agg(['mean', 'count'])
+    summary = result.groupby('num_hops')[COLUMNS].agg(['mean', 'count'])
     print(summary)
 
-    overall_averages = result[['em', 'f1']].mean()
+    overall_averages = result[COLUMNS].mean()
     print("\nOverall averages (no stop):")
     print(overall_averages)

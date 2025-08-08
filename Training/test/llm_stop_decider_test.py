@@ -7,15 +7,20 @@ import pandas as pd
 import torch
 from transformers import set_seed
 from vllm import LLM
+from ..utils import extract_documents_only
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.modules import AsyncOpenAIConfig
 from pipeline.stop_decider import StopDecider
+
+COLUMNS = ["em", "f1", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1"]
+
+pd.set_option('display.max_columns', None)
 
 
 def pick_values(subdf):
     over = subdf[subdf["decision"] == "STOP"]
     chosen = over.iloc[0] if not over.empty else subdf.iloc[-1]
-    return chosen[["em", "f1"]]
+    return chosen[COLUMNS + ["num_hops"]]
 
 
 def parse_args():
@@ -47,6 +52,7 @@ def parse_args():
     main_group = parser.add_argument_group("Main Options")
     main_group.add_argument("--input-path", type=str, required=True, help="Path to the input JSONL file")
     main_group.add_argument("--batch-size", type=int, default=128, help="Batch size for processing")
+    main_group.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     main_group.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 
     return parser.parse_args()
@@ -87,17 +93,23 @@ if __name__ == "__main__":
         temperature=args.sd_temperature,
         top_p=args.sd_top_p,
         provider=args.sd_provider,
+        use_docs_only=args.use_docs_only,
     )
 
     with open(args.input_path, "r", encoding="utf-8") as f:
         traces = [json.loads(line.strip()) for line in f]
 
+    fields = {"question": "question"}
+
     for i in tqdm(range(0, len(traces), args.batch_size)):
         batch_traces = traces[i:i + args.batch_size]
         batch_questions = [{"question": trace["question"]} for trace in batch_traces]
-        batch_trace_texts = [trace["trace"] for trace in batch_traces]
+        if args.use_docs_only:
+            batch_trace_texts = [extract_documents_only(trace["trace"]) for trace in batch_traces]
+        else:
+            batch_trace_texts = [trace["trace"] for trace in batch_traces]
 
-        stop_decisions = stop_decider.batch_decide(batch_questions, batch_trace_texts)
+        stop_decisions = stop_decider.batch_decide(batch_questions, batch_trace_texts, fields)
 
         for trace, decision in zip(batch_traces, stop_decisions):
             trace["decision"] = decision
@@ -107,12 +119,10 @@ if __name__ == "__main__":
 
     result = df.groupby("question_id", sort=False).apply(pick_values).reset_index()
 
-    result['num_hops'] = result['question_id'].str[0]
-
     print("\nDetailed summary:")
-    summary = result.groupby('num_hops')[['em', 'f1']].agg(['mean', 'count'])
+    summary = result.groupby('num_hops')[COLUMNS].agg(['mean', 'count'])
     print(summary)
 
-    overall_averages = result[['em', 'f1']].mean()
+    overall_averages = result[COLUMNS].mean()
     print("\nOverall averages:")
     print(overall_averages)
