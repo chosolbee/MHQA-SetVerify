@@ -44,15 +44,16 @@ def token_f1(pred: str, gold: str) -> float:
 
 def compute_retrieval_metrics(questions: List[Dict[str, Any]],
                               batch_history: List[List[Dict[str, Any]]],
-                              stop_logs: List[Dict[str, Any]]) -> Tuple[List[List[float]], ...]:
+                              stop_logs: List[Dict[str, Any]],
+                              fields: Dict[str, str]) -> Tuple[List[List[float]], ...]:
     em_list = [[], [], []]
     precision_list = [[], [], []]
     recall_list = [[], [], []]
     f1_list = [[], [], []]
 
     for question, history in zip(questions, batch_history):
-        qid = question["id"]
-        gold_hop = len(question.get("question_decomposition", []))
+        qid = question[fields["id"]]
+        gold_hop = len(question.get(fields["supporting_facts"], []))
         correct = sum(int(qid + "-sf" in doc["id"]) for doc in history)
         retrieved = len(history)
 
@@ -76,15 +77,16 @@ def compute_retrieval_metrics(questions: List[Dict[str, Any]],
 
 
 def compute_answer_metrics(questions: List[Dict[str, Any]],
-                           predictions: List[str]) -> Tuple[List[List[float]], List[List[float]]]:
+                           predictions: List[str],
+                           fields: Dict[str, str]) -> Tuple[List[List[float]], List[List[float]]]:
     em_list = [[], [], []]
     f1_list = [[], [], []]
 
     for question, prediction in zip(questions, predictions):
-        hop = len(question.get("question_decomposition", []))
+        hop = len(question.get(fields["supporting_facts"], []))
         idx = min(max(hop - 2, 0), 2)
 
-        gold_answers = [question["answer"]] + question.get("answer_aliases", [])
+        gold_answers = [question[fields["answer"]]] + question.get(fields["answer_aliases"], [])
         gold_answers = [normalize(g) for g in gold_answers]
 
         norm_pred = normalize(prediction)
@@ -99,12 +101,13 @@ def compute_answer_metrics(questions: List[Dict[str, Any]],
 
 
 def compute_all_answer_metrics(questions: List[Dict[str, Any]],
-                                 predictions: List[str]) -> Tuple[List[float], List[float]]:
+                               predictions: List[str],
+                               fields: Dict[str, str]) -> Tuple[List[float], List[float]]:
     em_list = []
     f1_list = []
 
     for question, prediction in zip(questions, predictions):
-        gold_answers = [question["answer"]] + question.get("answer_aliases", [])
+        gold_answers = [question[fields["answer"]]] + question.get(fields["answer_aliases"], [])
         gold_answers = [normalize(g) for g in gold_answers]
 
         norm_pred = normalize(prediction)

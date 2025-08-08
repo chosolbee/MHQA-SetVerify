@@ -1,12 +1,16 @@
 import argparse
 import pandas as pd
 
+COLUMNS = ["em", "f1", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1"]
+
+pd.set_option('display.max_columns', None)
+
 
 def pick_values(threshold):
     def wrapper(subdf):
         over = subdf[subdf["score1"] - subdf["score2"] > threshold]
         chosen = over.iloc[0] if not over.empty else subdf.iloc[-1]
-        return chosen[["em", "f1"]]
+        return chosen[COLUMNS + ["num_hops"]]
     return wrapper
 
 
@@ -31,12 +35,10 @@ if __name__ == "__main__":
 
         result = df.groupby("question_id", sort=False).apply(pick_values(threshold)).reset_index()
 
-        result['num_hops'] = result['question_id'].str[0]
-
         print("\nDetailed summary:")
-        summary = result.groupby('num_hops')[['em', 'f1']].agg(['mean', 'count'])
+        summary = result.groupby('num_hops')[COLUMNS].agg(['mean', 'count'])
         print(summary)
 
-        overall_averages = result[['em', 'f1']].mean()
+        overall_averages = result[COLUMNS].mean()
         print("\nOverall averages:")
         print(overall_averages)
