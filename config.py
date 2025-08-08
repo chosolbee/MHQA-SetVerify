@@ -5,3 +5,51 @@ WANDB_API_KEY = os.getenv("WANDB_API_KEY")
 assert WANDB_API_KEY is not None, "Please set the WANDB_API_KEY environment variable."
 
 DEBERTA_MAX_LENGTH = 768
+
+DATASET_PATHS = {
+    "hotpotqa": {
+        "train": "data/raw/hotpotqa/hotpot_train_v1.1.json",
+        "dev": "data/raw/hotpotqa/hotpot_dev_fullwiki_v1.json",
+        "test": None,
+        "passages": "data/corpus/hotpotqa/passages/corpus.jsonl",
+        "embeddings": "data/corpus/hotpotqa/embeddings",
+    },
+    "2wikimultihopqa": {
+        "train": "data/raw/2wikimultihopqa/train.json",
+        "dev": "data/raw/2wikimultihopqa/dev.json",
+        "test": "data/raw/2wikimultihopqa/test.json",
+        "passages": "data/corpus/2wikimultihopqa/passages/corpus.jsonl",
+        "embeddings": "data/corpus/2wikimultihopqa/embeddings",
+    },
+    "musique": {
+        "train": "data/raw/musique/musique_ans_v1.0_train.jsonl",
+        "dev": "data/raw/musique/musique_ans_v1.0_dev.jsonl",
+        "test": "data/raw/musique/musique_ans_v1.0_test.jsonl",
+        "passages": "data/corpus/musique/passages/corpus.jsonl",
+        "embeddings": "data/corpus/musique/embeddings",
+    },
+}
+
+DATASET_FIELDS = {
+    "hotpotqa": {
+        "id": "_id",
+        "question": "question",
+        "answer": "answer",
+        "answer_aliases": None,
+        "supporting_facts": "supporting_facts",
+    },
+    "2wikimultihopqa": {
+        "id": "_id",
+        "question": "question",
+        "answer": "answer",
+        "answer_aliases": None,
+        "supporting_facts": "supporting_facts",
+    },
+    "musique": {
+        "id": "id",
+        "question": "question",
+        "answer": "answer",
+        "answer_aliases": "answer_aliases",
+        "supporting_facts": "question_decomposition",
+    },
+}

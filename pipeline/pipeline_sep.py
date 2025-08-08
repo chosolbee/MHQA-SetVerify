@@ -4,6 +4,7 @@ import json
 import random as rd
 import argparse
 from typing import List, Dict, Any, Tuple, Union
+
 from tqdm import tqdm
 import torch
 from transformers import set_seed
@@ -217,6 +218,7 @@ def parse_args():
 
     retriever_group = parser.add_argument_group("Retriever Options")
     retriever_group.add_argument("--passages", type=str, help="document file path")
+
     retriever_group.add_argument("--retriever-type", type=str, default="contriever", choices=["contriever", "bm25"], help="Type of retriever to use")
     retriever_group.add_argument("--search-batch-size", type=int, default=16, help="Batch size for search queries")
     # contriever
@@ -225,6 +227,7 @@ def parse_args():
     retriever_group.add_argument("--bm25-k1", type=float, default=1.5, help="BM25 k1 parameter")
     retriever_group.add_argument("--bm25-b", type=float, default=0.8, help="BM25 b parameter")
     retriever_group.add_argument("--bm25-epsilon", type=float, default=0.2, help="BM25 epsilon parameter")
+
 
     vllm_group = parser.add_argument_group("vLLM Options")
     vllm_group.add_argument("--vllm-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for vLLM")
