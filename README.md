@@ -21,6 +21,7 @@ uv run python -m pipeline.pipeline_sep \
     --dataset ["hotpotqa"|"2wikimultihopqa"|"musique"] \
     --dataset-type "train" \
     --max-iterations 8 \
+    --fag-disable \
     --sd-provider "nostop" \
     --traces-path {TRACES_PATH} \
 
@@ -63,6 +64,7 @@ uv run python -m pipeline.pipeline_sep \
     --dataset ["hotpotqa"|"2wikimultihopqa"|"musique"] \
     --dataset-type "dev" \
     --max-iterations 8 \
+    --fag-disable \
     --sd-provider "nostop" \
     --traces-path {TRACES_PATH} \
 
