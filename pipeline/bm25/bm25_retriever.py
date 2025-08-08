@@ -10,6 +10,7 @@ import re
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from contriever.utils.utils import load_passages
 
+
 class BM25Retriever(object):
     def __init__(
         self,
@@ -104,15 +105,12 @@ class BM25Retriever(object):
         self.epsilon = index_data.get('epsilon', self.epsilon)
     
     def search(self, query: Union[str, List[str]], top_k: int = 10) -> List[List[Dict[str, Any]]]:
-
         queries = [query] if isinstance(query, str) else query
         
         results = []
         for q in queries:
             tokenized_query = self._preprocess_text(q)
-            
             scores = self.bm25.get_scores(tokenized_query)
-            
             top_indices = scores.argsort()[-top_k:][::-1]
             
             query_results = []
@@ -120,12 +118,12 @@ class BM25Retriever(object):
                 if idx < len(self.passages):
                     passage_id = self.passages[idx]["id"]
                     if passage_id in self.passage_map:
-                        query_results.append(self.passage_map[passage_id])
+                        doc = self.passage_map[passage_id].copy() 
+                        doc['score'] = float(scores[idx]) 
+                        query_results.append(doc)
             
             results.append(query_results[:top_k])
-        
         return results
-
 
 def parse_args():
     parser = argparse.ArgumentParser()

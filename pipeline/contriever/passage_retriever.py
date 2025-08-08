@@ -63,12 +63,15 @@ class Retriever(object):
         query = [query] if isinstance(query, str) else query
         query_vectors = self.embedder.embed(query)
         top_ids_scores = self.index.search(query_vectors, top_k)
-        # convert passage id to passage
-        docs = [
-            [self.passage_map[doc_id] for doc_id in top_docs]
-            for top_docs, top_scores in top_ids_scores
-        ]
-        docs = [doc_list[:top_k] for doc_list in docs]
+        
+        docs = []
+        for top_docs, top_scores in top_ids_scores:
+            doc_list = []
+            for doc_id, score in zip(top_docs, top_scores):
+                doc = self.passage_map[doc_id].copy()
+                doc['score'] = float(score)
+                doc_list.append(doc)
+            docs.append(doc_list[:top_k])
         return docs
 
 

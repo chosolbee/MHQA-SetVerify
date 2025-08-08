@@ -9,6 +9,7 @@ import torch
 from transformers import set_seed
 from vllm import LLM
 import wandb
+import numpy as np
 
 from config import WANDB_ENTITY, DEBERTA_MAX_LENGTH, DATASET_PATHS, DATASET_FIELDS
 from .utils import print_metrics, compute_retrieval_metrics, compute_answer_metrics, compute_all_answer_metrics
@@ -24,7 +25,7 @@ from .stop_decider import StopDecider
 def run_batch(
     retriever: Union[Retriever, BM25Retriever],
     query_generator: QueryGenerator,
-    reranker: Reranker,
+    reranker: Union[Reranker, None],
     intermediate_answer_generator: AnswerGenerator,
     final_answer_generator: AnswerGenerator,
     stop_decider: StopDecider,
@@ -56,9 +57,16 @@ def run_batch(
         batch_docs = []
         for i in range(0, len(search_queries), search_batch_size):
             batch_queries = search_queries[i:i + search_batch_size]
-            batch_docs.extend(retriever.search(batch_queries, max_search))
+            docs = retriever.search(batch_queries, max_search)
+            batch_docs.extend(docs)
 
-        batch_scores = reranker.batch_rank(search_queries, batch_docs)
+        if reranker is not None:
+            batch_scores = reranker.batch_rank(search_queries, batch_docs)
+        else:
+            batch_scores = []
+            for docs in batch_docs:
+                scores = [doc['score'] for doc in docs]
+                batch_scores.append(np.array(scores))
 
         selected_docs = []
         for question, history, trace, docs, scores in zip(questions, batch_history, traces, batch_docs, batch_scores):
@@ -242,6 +250,7 @@ def parse_args():
     query_generator_group.add_argument("--qg-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for query generator")
 
     reranker_group = parser.add_argument_group("Reranker Options")
+    reranker_group.add_argument("--reranker-disable", action="store_true", help="Disable reranker and use retriever scores")
     reranker_group.add_argument("--reranker-model-id", type=str, default="BAAI/bge-reranker-v2-m3", help="Model ID for reranker")
     reranker_group.add_argument("--reranker-batch-size", type=int, default=8, help="Batch size for reranker")
     reranker_group.add_argument("--reranker-max-length", type=int, default=DEBERTA_MAX_LENGTH, help="Maximum length for reranker input")
@@ -294,9 +303,6 @@ def main(args: argparse.Namespace):
     passages = args.passages or DATASET_PATHS[args.dataset]["passages"]
 
     if args.retriever_type == "contriever":
-        if not args.embeddings:
-            raise ValueError("--embeddings path is required when using contriever retriever")
-        
         embeddings = args.embeddings or DATASET_PATHS[args.dataset]["embeddings"]
 
         retriever = Retriever(
@@ -345,11 +351,13 @@ def main(args: argparse.Namespace):
         provider=args.qg_provider,
     )
 
-    reranker = Reranker(
-        model_id=args.reranker_model_id,
-        batch_size=args.reranker_batch_size,
-        max_length=args.reranker_max_length,
-    )
+    reranker = None
+    if not args.reranker_disable:
+        reranker = Reranker(
+            model_id=args.reranker_model_id,
+            batch_size=args.reranker_batch_size,
+            max_length=args.reranker_max_length,
+        )
 
     intermediate_answer_generator = AnswerGenerator(
         llm=vllm_agent if args.iag_provider == "vllm" else openai_config,
