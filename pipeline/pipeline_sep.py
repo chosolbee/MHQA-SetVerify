@@ -30,6 +30,7 @@ def run_batch(
     questions: List[Dict[str, Any]],
     max_iterations: int = 5,
     max_search: int = 10,
+    search_batch_size: int = 16,
     traces_path: str = None,
     stop_log_path: str = None,
     log_trace: bool = False,
@@ -51,7 +52,6 @@ def run_batch(
         new_traces, search_queries = query_generator.batch_generate(questions, traces, fields)
         traces = new_traces
 
-        search_batch_size = 16
         batch_docs = []
         for i in range(0, len(search_queries), search_batch_size):
             batch_queries = search_queries[i:i + search_batch_size]
@@ -209,6 +209,7 @@ def parse_args():
     retriever_group = parser.add_argument_group("Retriever Options")
     retriever_group.add_argument("--passages", type=str, help="document file path")
     retriever_group.add_argument("--embeddings", type=str, help="Document embedding path")
+    retriever_group.add_argument("--search-batch-size", type=int, default=16, help="Batch size for search queries")
 
     vllm_group = parser.add_argument_group("vLLM Options")
     vllm_group.add_argument("--vllm-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for vLLM")
@@ -400,6 +401,7 @@ def main(args: argparse.Namespace):
             questions=batch_questions,
             max_iterations=args.max_iterations,
             max_search=args.max_search,
+            search_batch_size=args.search_batch_size,
             traces_path=args.traces_path,
             stop_log_path=args.stop_log_path,
             log_trace=args.log_trace,
