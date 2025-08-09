@@ -11,7 +11,7 @@ uv sync
 ```bash
 ./datasets/download_datasets.sh
 ./datasets/build_corpus.sh
-# should add code for creating retrieval embeddings and index
+./datasets/build_index.sh ["contriever"|"bm25"]
 ```
 
 ## Dataset creation for training
@@ -75,9 +75,8 @@ uv run python -m pipeline.pipeline_sep \
     --allow-duplicate-docs \  # optional (for BM25)
     --reranker-disable \      # optional (for BM25)
     --fag-disable \
-    --fag-disable \
     --sd-provider "nostop" \
-    --traces-path {TRACES_PATH} \
+    --traces-path {TRACES_PATH}
 
 uv run python -m Training.preprocessing.extract_partial_traces \
     --input-path {TRACES_PATH} \

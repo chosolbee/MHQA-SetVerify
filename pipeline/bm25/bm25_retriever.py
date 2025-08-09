@@ -18,10 +18,10 @@ class BM25Retriever(object):
         model_type: str = None,
         model_path: str = None,
         save_or_load_index: bool = True,
-        batch_size: int = 128, 
-        embed_vector_dim: int = None, 
-        index_type: str = "Flat", 
-        max_search_batch_size: int = 2048, 
+        batch_size: int = 128,
+        embed_vector_dim: int = None,
+        index_type: str = "Flat",
+        max_search_batch_size: int = 2048,
         k1: float = 1.5,
         b: float = 0.8,
         epsilon: float = 0.2
@@ -70,9 +70,9 @@ class BM25Retriever(object):
             tokenized_docs.append(tokens)
 
         self.bm25 = BM25Okapi(
-            tokenized_docs, 
-            k1=self.k1, 
-            b=self.b, 
+            tokenized_docs,
+            k1=self.k1,
+            b=self.b,
             epsilon=self.epsilon
         )
         self.tokenized_docs = tokenized_docs
@@ -116,8 +116,8 @@ class BM25Retriever(object):
                 if idx < len(self.passages):
                     passage_id = self.passages[idx]["id"]
                     if passage_id in self.passage_map:
-                        doc = self.passage_map[passage_id].copy() 
-                        doc['score'] = float(scores[idx]) 
+                        doc = self.passage_map[passage_id].copy()
+                        doc['score'] = float(scores[idx])
                         query_results.append(doc)
 
             results.append(query_results[:top_k])
@@ -148,9 +148,9 @@ def parse_args():
     )
     parser.add_argument("--save_or_load_index", action="store_true")
     parser.add_argument(
-        "--embeddings", 
-        type=str, 
-        default=None, 
+        "--embeddings",
+        type=str,
+        default=None,
         help="Not used for BM25 but kept for compatibility"
     )
     parser.add_argument("--query", type=str, help="query")
