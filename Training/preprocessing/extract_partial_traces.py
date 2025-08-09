@@ -27,7 +27,7 @@ if __name__ == "__main__":
         num_hops = data["gold_hop"]
         answers = [data["answer"]] + data["answer_aliases"]
         trace = data["trace"]
-        history = [f"{doc['title']}: {doc['text']}" for doc in data["history"]]
+        history = data["history"]
         history_indices = data["history_indices"]
 
         partial_trace = ""
@@ -47,7 +47,7 @@ if __name__ == "__main__":
                         "answers": answers,
                         "iter_cnt": iter_cnt,
                         "trace": partial_trace.strip(),
-                        "history": partial_history,
+                        "history": [f"{doc['title']}: {doc['text']}" for doc in partial_history],
                         "retrieval_em": int(partial_gold_cnt == num_hops and len(partial_history) == num_hops),
                         "retrieval_precision": partial_gold_cnt / len(partial_history),
                         "retrieval_recall": partial_gold_cnt / num_hops,
