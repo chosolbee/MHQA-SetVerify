@@ -62,25 +62,37 @@ def build_2wikimultihopqa_corpus():
         for question in tqdm(dataset, desc=f"Processing {dataset_path}"):
             question_id = question["_id"]
             context = question["context"]
-            supporting_facts = [sf[0] for sf in question["supporting_facts"]]
+            supporting_facts = {sf[0]: sf[1] for sf in question["supporting_facts"]}
 
             for idx, doc in enumerate(context):
                 title = doc[0]
-                text = " ".join(doc[1])
-                is_supporting = title in supporting_facts
+                sentences = doc[1]
 
-                hashed_doc = hash(f"{title}: {text}")
-                new_id = f"{question_id}{'-sf' if is_supporting else ''}-{idx:02d}"
+                chunk = ""
+                last_s_idx = -1
 
-                if hashed_doc not in corpus:
-                    corpus[hashed_doc] = {
-                        "id": new_id,
-                        "title": title,
-                        "text": text,
-                    }
-                else:
-                    existing_doc = corpus[hashed_doc]
-                    existing_doc["id"] += f"//{new_id}"
+                for s_idx, sentence in enumerate(sentences):
+                    chunk += sentence + " "
+
+                    if len(chunk.split()) > 512 or s_idx == len(sentences) - 1:
+                        text = chunk.strip()
+                        is_supporting = title in supporting_facts and last_s_idx < supporting_facts[title] <= s_idx
+
+                        hashed_doc = hash(f"{title}: {text}")
+                        new_id = f"{question_id}{'-sf' if is_supporting else ''}-{idx:02d}-{last_s_idx + 1:d}_{s_idx + 1:d}"
+
+                        if hashed_doc not in corpus:
+                            corpus[hashed_doc] = {
+                                "id": new_id,
+                                "title": title,
+                                "text": text,
+                            }
+                        else:
+                            existing_doc = corpus[hashed_doc]
+                            existing_doc["id"] += f"//{new_id}"
+
+                        chunk = sentence
+                        last_s_idx = s_idx - 1
 
     print(f"Generated corpus with {len(corpus)} unique documents.")
 
