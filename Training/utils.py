@@ -1,12 +1,3 @@
-def extract_documents_only(trace_text):
-    documents = []
-    lines = trace_text.split('\n')
-    for line in lines:
-        if line.startswith("Document: "):
-            documents.append(line)
-    return '\n'.join(documents)
-
-
 def convert_chat_to_text(chat, tokenizer, use_docs_only=False):
     content = ""
     for message in chat:

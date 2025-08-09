@@ -11,7 +11,7 @@ from transformers import (
     set_seed,
 )
 from peft import PeftModelForSequenceClassification
-from ..utils import extract_documents_only, convert_chat_to_text
+from ..utils import convert_chat_to_text
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
 
@@ -80,7 +80,10 @@ if __name__ == "__main__":
         batch_traces = traces[i:i + args.batch_size]
 
         if args.use_docs_only:
-            batch_prompts = [gen_final_answer_docs_only_prompt(trace["question"], extract_documents_only(trace["trace"])) for trace in batch_traces]
+            batch_prompts = [
+                gen_final_answer_docs_only_prompt(trace["question"], "\n".join(f"Document: {doc}" for doc in trace["history"]))
+                for trace in batch_traces
+            ]
         else:
             batch_prompts = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces]
 
