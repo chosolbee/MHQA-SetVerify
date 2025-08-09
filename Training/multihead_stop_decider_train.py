@@ -21,7 +21,7 @@ from transformers import (
 from safetensors.torch import load_file
 from peft import LoraConfig, TaskType, PeftModel, prepare_model_for_kbit_training
 import wandb
-from .utils import extract_documents_only, convert_chat_to_text
+from .utils import convert_chat_to_text
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from config import WANDB_ENTITY
 from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
@@ -51,7 +51,7 @@ class MultiheadStopDecisionDataset(Dataset):
 
     def _trace_to_encoding(self, trace, add_labels=True):
         if self.use_docs_only:
-            filtered_trace = extract_documents_only(trace["trace"])
+            filtered_trace = "\n".join(f"Document: {doc}" for doc in trace["history"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
         else:
             filtered_trace = trace["trace"]

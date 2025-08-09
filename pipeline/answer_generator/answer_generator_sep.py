@@ -42,10 +42,10 @@ class AnswerGenerator:
                 top_p=self.top_p,
             )
 
-    def batch_generate_intermediate_answers(self, queries: List[str], docs: List[str]) -> List[str]:
+    def batch_generate_intermediate_answers(self, queries: List[str], batch_docs: List[str]) -> List[str]:
         prompts = [
-            gen_intermediate_answer_prompt(f"Question: {query}\nDocument: {doc}")
-            for query, doc in zip(queries, docs)
+            gen_intermediate_answer_prompt(f"Question: {query}\n" + "\n".join(f"Document: {doc}" for doc in docs))
+            for query, docs in zip(queries, batch_docs)
         ]
 
         if self.provider == "vllm":

@@ -21,9 +21,14 @@ uv run python -m pipeline.pipeline_sep \
     --dataset ["hotpotqa"|"2wikimultihopqa"|"musique"] \
     --dataset-type "train" \
     --max-iterations 8 \
+    --retriever-type ["contriever"|"bm25"] \
+    --max-search 4 \          # optional (for BM25)
+    --max-docs 4 \            # optional (for BM25)
+    --allow-duplicate-docs \  # optional (for BM25)
+    --reranker-disable \      # optional (for BM25)
     --fag-disable \
     --sd-provider "nostop" \
-    --traces-path {TRACES_PATH} \
+    --traces-path {TRACES_PATH}
 
 uv run python -m Training.preprocessing.extract_partial_traces \
     --input-path {TRACES_PATH} \
@@ -64,6 +69,12 @@ uv run python -m pipeline.pipeline_sep \
     --dataset ["hotpotqa"|"2wikimultihopqa"|"musique"] \
     --dataset-type "dev" \
     --max-iterations 8 \
+    --retriever-type ["contriever"|"bm25"] \
+    --max-search 4 \          # optional (for BM25)
+    --max-docs 4 \            # optional (for BM25)
+    --allow-duplicate-docs \  # optional (for BM25)
+    --reranker-disable \      # optional (for BM25)
+    --fag-disable \
     --fag-disable \
     --sd-provider "nostop" \
     --traces-path {TRACES_PATH} \
