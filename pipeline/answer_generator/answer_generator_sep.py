@@ -44,7 +44,7 @@ class AnswerGenerator:
 
     def batch_generate_intermediate_answers(self, queries: List[str], batch_docs: List[str]) -> List[str]:
         prompts = [
-            gen_intermediate_answer_prompt(f"Question: {query}\n" + "\n".join(f"Document: {doc}" for doc in docs))
+            gen_intermediate_answer_prompt(f"Question: {query}\n" + "\n".join(f"Document: {doc['title']}: {doc['text']}" for doc in docs))
             for query, docs in zip(queries, batch_docs)
         ]
 
