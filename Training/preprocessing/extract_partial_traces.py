@@ -27,7 +27,8 @@ if __name__ == "__main__":
         num_hops = data["gold_hop"]
         answers = [data["answer"]] + data["answer_aliases"]
         trace = data["trace"]
-        retrieval_history = data["retrieval_history"]
+        history = data["history"]
+        history_indices = data["history_indices"]
 
         partial_trace = ""
         iter_cnt = 0
@@ -36,19 +37,21 @@ if __name__ == "__main__":
             if line.startswith("Intermediate answer: "):
                 cnt += 1
                 iter_cnt += 1
-                partial_retrieval_result = sum(retrieval_history[:iter_cnt])
+                partial_history = history[:history_indices[iter_cnt - 1]]
+                partial_gold_cnt = sum(question_id + "-sf" in doc["id"] for doc in partial_history)
                 with open(args.output_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps({
                         "question_id": question_id,
                         "question": question,
                         "num_hops": num_hops,
                         "answers": answers,
-                        "trace": partial_trace.strip(),
                         "iter_cnt": iter_cnt,
-                        "retrieval_em": int(partial_retrieval_result == num_hops and iter_cnt == num_hops),
-                        "retrieval_precision": partial_retrieval_result / iter_cnt,
-                        "retrieval_recall": partial_retrieval_result / num_hops,
-                        "retrieval_f1": (2 * partial_retrieval_result) / (iter_cnt + num_hops),
+                        "trace": partial_trace.strip(),
+                        "history": [f"{doc['title']}: {doc['text']}" for doc in partial_history],
+                        "retrieval_em": int(partial_gold_cnt == num_hops and len(partial_history) == num_hops),
+                        "retrieval_precision": partial_gold_cnt / len(partial_history),
+                        "retrieval_recall": partial_gold_cnt / num_hops,
+                        "retrieval_f1": (2 * partial_gold_cnt) / (len(partial_history) + num_hops),
                     }, ensure_ascii=False) + "\n")
             if iter_cnt >= args.max_iterations:
                 break

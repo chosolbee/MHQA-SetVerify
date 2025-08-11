@@ -116,6 +116,7 @@ class BM25Retriever(object):
                 result_doc['score'] = float(score)
                 doc_list.append(result_doc)
             results.append(doc_list[:top_k])
+
         return results
 
 
@@ -141,6 +142,12 @@ def parse_args():
         type=str,
         default=None,
         help="Directory to save or load the BM25S index",
+    )
+    parser.add_argument(
+        "--index_path_dir",
+        type=str,
+        default=None,
+        help="Directory to save or load the BM25 index",
     )
     parser.add_argument("--save_or_load_index", action="store_true")
     parser.add_argument(
@@ -179,7 +186,7 @@ def test(opt):
         method=opt.method,
         use_mmap=opt.use_mmap,
     )
-    
+
     if opt.query is None:
         queries = [
             "Were Scott Derrickson and Ed Wood of the same nationality?",
@@ -187,7 +194,7 @@ def test(opt):
         ]
     else:
         queries = [opt.query]
-    
+
     docs = retriever.search(queries, 20)
     print(docs)
 

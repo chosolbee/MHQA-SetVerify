@@ -12,21 +12,24 @@ DATASET_PATHS = {
         "dev": "data/raw/hotpotqa/hotpot_dev_fullwiki_v1.json",
         "test": None,
         "passages": "data/corpus/hotpotqa/passages/corpus.jsonl",
-        "embeddings": "data/corpus/hotpotqa/embeddings",
+        "contriever_embeddings": "data/corpus/hotpotqa/contriever_embeddings",
+        "bm25_index": "data/corpus/hotpotqa/bm25_index",
     },
     "2wikimultihopqa": {
         "train": "data/raw/2wikimultihopqa/train.json",
         "dev": "data/raw/2wikimultihopqa/dev.json",
         "test": "data/raw/2wikimultihopqa/test.json",
         "passages": "data/corpus/2wikimultihopqa/passages/corpus.jsonl",
-        "embeddings": "data/corpus/2wikimultihopqa/embeddings",
+        "contriever_embeddings": "data/corpus/2wikimultihopqa/contriever_embeddings",
+        "bm25_index": "data/corpus/2wikimultihopqa/bm25_index",
     },
     "musique": {
         "train": "data/raw/musique/musique_ans_v1.0_train.jsonl",
         "dev": "data/raw/musique/musique_ans_v1.0_dev.jsonl",
         "test": "data/raw/musique/musique_ans_v1.0_test.jsonl",
         "passages": "data/corpus/musique/passages/corpus.jsonl",
-        "embeddings": "data/corpus/musique/embeddings",
+        "contriever_embeddings": "data/corpus/musique/contriever_embeddings",
+        "bm25_index": "data/corpus/musique/bm25_index",
     },
 }
 
