@@ -9,9 +9,9 @@ uv sync
 ## Dataset download and preprocessing
 
 ```bash
-./datasets/download_datasets.sh
-./datasets/build_corpus.sh
-./datasets/build_index.sh ["contriever"|"bm25"]
+./download/download_datasets.sh
+./download/build_corpus.sh
+./download/build_index.sh ["contriever"|"bm25"]
 ```
 
 ## Dataset creation for training
