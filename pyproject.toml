@@ -9,6 +9,7 @@ dependencies = [
     "autoawq>=0.2.9",
     "autoawq-kernels>=0.0.9",
     "bitsandbytes>=0.46.1",
+    "bm25s>=0.2.13",
     "datasets>=4.0.0",
     "deepspeed>=0.17.4",
     "faiss-cpu>=1.11.0.post1",

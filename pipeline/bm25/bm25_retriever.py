@@ -1,12 +1,10 @@
-import json
-import pickle
+import argparse
 import os
 import sys
-import argparse
-from typing import List, Union, Dict, Any
-from rank_bm25 import BM25Okapi
-import re
+from typing import List, Union
+import json
 
+import bm25s
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from contriever.utils.utils import load_passages
 
@@ -20,110 +18,106 @@ class BM25Retriever(object):
         model_type: str = None,
         model_path: str = None,
         save_or_load_index: bool = True,
-        batch_size: int = 128, 
-        embed_vector_dim: int = None, 
-        index_type: str = "Flat", 
-        max_search_batch_size: int = 2048, 
-        k1: float = 1.5,
-        b: float = 0.8,
-        epsilon: float = 0.2
+        batch_size: int = 128,
+        embed_vector_dim: int = None,
+        index_type: str = "Flat",
+        max_search_batch_size: int = 2048,
+        k1: float = 1.2,
+        b: float = 0.75,
+        method: str = "lucene",
+        use_mmap: bool = False,
     ):
         self.k1 = k1
         self.b = b
-        self.epsilon = epsilon
+        self.method = method
+        self.use_mmap = use_mmap
         
         if index_path_dir is None:
-            index_path_dir = os.path.dirname(passage_path)
-        
-        self.index_path = os.path.join(index_path_dir, "bm25_index.pkl")
-        
+            index_path_dir = os.path.join(os.path.dirname(os.path.dirname(passage_path)), "bm25s_index")
+        self.index_path = os.path.join(index_path_dir, "bm25s_index")
+
         if save_or_load_index and self._index_exists():
-            print(f"Loading BM25 index from {self.index_path}")
+            print(f"Loading index from {self.index_path}")
             self._load_index()
         else:
-            print(f"Building BM25 index from {passage_path}")
+            print(f"Building index from {passage_path}")
             self._build_index(passage_path)
             if save_or_load_index:
-                print(f"Saving BM25 index to {self.index_path}")
+                print(f"Saving index to {self.index_path}")
                 self._save_index()
-        
-        print(f"Loading passages from {passage_path}")
+
+    def _index_exists(self):
+        return os.path.exists(self.index_path) and os.path.isdir(self.index_path)
+
+    def _build_index(self, passage_path):
         passages = load_passages(passage_path)
-        self.passage_map = {p["id"]: p for p in passages}
-        print(f"Loaded {len(passages)} passages.")
-    
-    def _index_exists(self) -> bool:
-        return os.path.exists(self.index_path)
-    
-    def _preprocess_text(self, text: str) -> List[str]:
-        text = text.lower()
-        text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)
-        text = re.sub(r'\s+', ' ', text).strip()
-        tokens = text.split()
-        return tokens
-    
-    def _build_index(self, passage_path: str):
-        passages = load_passages(passage_path)
+        print(f"Loaded {len(passages)} passages for indexing.")
         
-        tokenized_docs = []
+        corpus = []
         for passage in passages:
-            full_text = f"{passage.get('title', '')} {passage['text']}"
-            tokens = self._preprocess_text(full_text)
-            tokenized_docs.append(tokens)
+            title = passage.get('title', '').strip()
+            text = passage.get('text', '').strip()
+            full_text = f"{title} {text}".strip() if title else text
+            corpus.append(full_text)
         
-        self.bm25 = BM25Okapi(
-            tokenized_docs, 
-            k1=self.k1, 
-            b=self.b, 
-            epsilon=self.epsilon
-        )
-        self.tokenized_docs = tokenized_docs
+        print("Tokenizing corpus...")
+        corpus_tokens = bm25s.tokenize(corpus, stopwords="en", return_ids=False)
+        
+        print("Creating BM25S model and indexing...")
+        self.bm25 = bm25s.BM25(k1=self.k1, b=self.b, method=self.method)
+        self.bm25.index(corpus_tokens)
+        
         self.passages = passages
-    
+        self.passage_map = {p["id"]: p for p in self.passages}
+
+        print(f"BM25S indexing completed. Method: {self.method}")
+
     def _save_index(self):
-        index_data = {
-            'bm25': self.bm25,
-            'tokenized_docs': self.tokenized_docs,
-            'passages': self.passages,
-            'k1': self.k1,
-            'b': self.b,
-            'epsilon': self.epsilon
-        }
         os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
-        with open(self.index_path, 'wb') as f:
-            pickle.dump(index_data, f)
-    
-    def _load_index(self):
-        with open(self.index_path, 'rb') as f:
-            index_data = pickle.load(f)
+        self.bm25.save(self.index_path)
         
-        self.bm25 = index_data['bm25']
-        self.tokenized_docs = index_data['tokenized_docs']
-        self.passages = index_data['passages']
-        self.k1 = index_data.get('k1', self.k1)
-        self.b = index_data.get('b', self.b)
-        self.epsilon = index_data.get('epsilon', self.epsilon)
-    
-    def search(self, query: Union[str, List[str]], top_k: int = 10) -> List[List[Dict[str, Any]]]:
-        queries = [query] if isinstance(query, str) else query
+        import json
+        passages_file = os.path.join(self.index_path, "passages.json")
+        with open(passages_file, 'w', encoding='utf-8') as f:
+            json.dump(self.passages, f, ensure_ascii=False, indent=2)
+
+    def _load_index(self):
+        self.bm25 = bm25s.BM25.load(
+            self.index_path, 
+            load_corpus=False,
+            mmap=self.use_mmap
+        )
+        
+        passages_file = os.path.join(self.index_path, "passages.json")
+        if os.path.exists(passages_file):
+            with open(passages_file, 'r', encoding='utf-8') as f:
+                self.passages = json.load(f)
+        
+        self.passage_map = {p["id"]: p for p in self.passages}
+
+        print(f"BM25S index loaded. Method: {self.bm25.method}, Memory-mapped: {self.use_mmap}")
+
+    def search(self, query: Union[str, List[str]], top_k: int = 10):
+        query = [query] if isinstance(query, str) else query
+        query_tokens = bm25s.tokenize(query, stopwords="en", return_ids=False)
+        
+        docs, scores = self.bm25.retrieve(
+            query_tokens,
+            corpus=self.passages,
+            k=top_k,
+            show_progress=False
+        )
         
         results = []
-        for q in queries:
-            tokenized_query = self._preprocess_text(q)
-            scores = self.bm25.get_scores(tokenized_query)
-            top_indices = scores.argsort()[-top_k:][::-1]
-            
-            query_results = []
-            for idx in top_indices:
-                if idx < len(self.passages):
-                    passage_id = self.passages[idx]["id"]
-                    if passage_id in self.passage_map:
-                        doc = self.passage_map[passage_id].copy() 
-                        doc['score'] = float(scores[idx]) 
-                        query_results.append(doc)
-            
-            results.append(query_results[:top_k])
+        for row_docs, row_scores in zip(docs, scores):
+            doc_list = []
+            for doc, score in zip(row_docs, row_scores):
+                result_doc = doc.copy()
+                result_doc['score'] = float(score)
+                doc_list.append(result_doc)
+            results.append(doc_list[:top_k])
         return results
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -133,45 +127,57 @@ def parse_args():
     parser.add_argument(
         "--model_type",
         type=str,
-        default="bm25",
-        help="Retrieval model type (bm25)",
+        default="bm25s",
+        help="Retrieval model type (bm25s)",
     )
     parser.add_argument(
         "--model_name_or_path",
         type=str,
         default=None,
-        help="Not used for BM25 but kept for compatibility",
+        help="Not used for BM25S but kept for compatibility",
+    )
+    parser.add_argument(
+        "--index_path_dir",
+        type=str,
+        default=None,
+        help="Directory to save or load the BM25S index",
     )
     parser.add_argument("--save_or_load_index", action="store_true")
     parser.add_argument(
-        "--embeddings", 
-        type=str, 
-        default=None, 
-        help="Not used for BM25 but kept for compatibility"
+        "--embeddings",
+        type=str,
+        default=None,
+        help="Not used for BM25S but kept for compatibility"
     )
     parser.add_argument("--query", type=str, help="query")
-    
     parser.add_argument(
-        "--k1", type=float, default=1.5, help="BM25 k1 parameter"
+        "--k1", type=float, default=1.2, help="BM25 k1 parameter"
     )
     parser.add_argument(
-        "--b", type=float, default=0.8, help="BM25 b parameter" 
+        "--b", type=float, default=0.75, help="BM25 b parameter" 
     )
     parser.add_argument(
-        "--epsilon", type=float, default=0.2, help="BM25 epsilon parameter"
+        "--method", type=str, default="lucene", 
+        choices=["lucene", "robertson", "atire", "bm25l", "bm25+"],
+        help="BM25 variant method"
     )
-    
+    parser.add_argument(
+        "--use_mmap", action="store_true", 
+        help="Use memory mapping for large indices"
+    )
     args = parser.parse_args()
     return args
 
 
 def test(opt):
     retriever = BM25Retriever(
-        passage_path=opt.passages,
+        opt.passages,
+        index_path_dir=opt.index_path_dir,
         save_or_load_index=opt.save_or_load_index,
         k1=opt.k1,
         b=opt.b,
-        epsilon=opt.epsilon
+        method=opt.method,
+        use_mmap=opt.use_mmap,
     )
     
     if opt.query is None:
@@ -187,6 +193,5 @@ def test(opt):
 
 
 if __name__ == "__main__":
-    import argparse
     options = parse_args()
     test(options)
