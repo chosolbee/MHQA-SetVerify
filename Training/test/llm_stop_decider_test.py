@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.modules import AsyncOpenAIConfig
 from pipeline.stop_decider import StopDecider
 
-COLUMNS = ["em", "f1", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1"]
+COLUMNS = ["em", "f1", "acc", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1"]
 
 pd.set_option('display.max_columns', None)
 
@@ -104,7 +104,7 @@ if __name__ == "__main__":
         batch_traces = traces[i:i + args.batch_size]
         batch_questions = [{"question": trace["question"]} for trace in batch_traces]
         if args.use_docs_only:
-            batch_trace_texts = ["\n".join(f"Document: {doc}" for doc in trace["history"]) for trace in batch_traces]
+            batch_trace_texts = ["\n".join(f"Document: {doc['title']: {doc['text']}}" for doc in trace["history"]) for trace in batch_traces]
         else:
             batch_trace_texts = [trace["trace"] for trace in batch_traces]
 

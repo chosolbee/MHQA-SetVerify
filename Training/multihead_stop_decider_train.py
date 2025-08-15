@@ -51,7 +51,7 @@ class MultiheadStopDecisionDataset(Dataset):
 
     def _trace_to_encoding(self, trace, add_labels=True):
         if self.use_docs_only:
-            filtered_trace = "\n".join(f"Document: {doc}" for doc in trace["history"])
+            filtered_trace = "\n".join(f"Document: {doc['title']}: {doc['text']}" for doc in trace["history"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
         else:
             filtered_trace = trace["trace"]
@@ -525,7 +525,7 @@ def parse_args():
     parser.add_argument("--model-arch", type=str, default="encoder_only", choices=["encoder_only", "decoder_only", "encoder_decoder"], help="Model Architecture")
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
-    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
+    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1", "acc"], help="Target label for training")
     parser.add_argument("--lambda-init", type=float, default=1.0, help="Initial Value of lambda for TD Lambda")
     parser.add_argument("--lambda-final", type=float, default=0.1, help="Final Value of lambda for TD Lambda")
     parser.add_argument("--lambda-scheduler-type", type=str, default="cosine", choices=["linear", "exponential", "cosine", "none"], help="TD Lambda Scheduler Type")

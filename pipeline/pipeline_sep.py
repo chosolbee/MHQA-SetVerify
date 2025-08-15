@@ -183,13 +183,13 @@ def run_batch(
             for log in stop_logs:
                 f.write(json.dumps(log, ensure_ascii=False) + '\n')
 
-    ans_em_list, ans_f1_list = compute_answer_metrics(final_questions, final_predictions, fields)
+    ans_em_list, ans_f1_list, ans_acc_list = compute_answer_metrics(final_questions, final_predictions, fields)
 
     if traces_path:
-        all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions, fields)
+        all_ans_em_list, all_ans_f1_list, all_ans_acc_list = compute_all_answer_metrics(final_questions, final_predictions, fields)
         with open(traces_path, 'a', encoding='utf-8') as f:
-            for question, history, history_indices, trace, prediction, em, f1 in zip(
-                final_questions, final_batch_history, final_batch_history_indices, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list
+            for question, history, history_indices, trace, prediction, em, f1, acc in zip(
+                final_questions, final_batch_history, final_batch_history_indices, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list, all_ans_acc_list
             ):
                 info = {
                     "question_id": question[fields["id"]],
@@ -203,6 +203,7 @@ def run_batch(
                     "prediction": prediction,
                     "em": em,
                     "f1": f1,
+                    "acc": acc,
                 }
                 f.write(json.dumps(info, ensure_ascii=False) + '\n')
 
@@ -211,11 +212,12 @@ def run_batch(
             "em": em_list,
             "precision": precision_list,
             "recall": recall_list,
-            "f1": f1_list
+            "f1": f1_list,
         },
         "answer": {
             "em": ans_em_list,
-            "f1": ans_f1_list
+            "f1": ans_f1_list,
+            "acc": ans_acc_list,
         }
     }
 
@@ -436,11 +438,12 @@ def main(args: argparse.Namespace):
             "em": [[], [], []],
             "precision": [[], [], []],
             "recall": [[], [], []],
-            "f1": [[], [], []]
+            "f1": [[], [], []],
         },
         "answer": {
             "em": [[], [], []],
-            "f1": [[], [], []]
+            "f1": [[], [], []],
+            "acc": [[], [], []],
         }
     }
 
@@ -491,6 +494,7 @@ def main(args: argparse.Namespace):
         print("\n===== CUMULATIVE ANSWER METRICS =====")
         print_metrics(all_metrics["answer"]["em"], "EM")
         print_metrics(all_metrics["answer"]["f1"], "F1")
+        print_metrics(all_metrics["answer"]["acc"], "Acc")
 
     print("\n===== FINAL RETRIEVAL METRICS =====")
     print_metrics(all_metrics["retrieval"]["em"], "EM")
@@ -501,6 +505,7 @@ def main(args: argparse.Namespace):
     print("\n===== FINAL ANSWER METRICS =====")
     print_metrics(all_metrics["answer"]["em"], "EM")
     print_metrics(all_metrics["answer"]["f1"], "F1")
+    print_metrics(all_metrics["answer"]["acc"], "Acc")
 
     if args.output_path:
         output_data = {

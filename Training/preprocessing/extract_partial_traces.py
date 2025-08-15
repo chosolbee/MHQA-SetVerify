@@ -47,7 +47,7 @@ if __name__ == "__main__":
                         "answers": answers,
                         "iter_cnt": iter_cnt,
                         "trace": partial_trace.strip(),
-                        "history": [f"{doc['title']}: {doc['text']}" for doc in partial_history],
+                        "history": partial_history,
                         "retrieval_em": int(partial_gold_cnt == num_hops and len(partial_history) == num_hops),
                         "retrieval_precision": partial_gold_cnt / len(partial_history),
                         "retrieval_recall": partial_gold_cnt / num_hops,
