@@ -136,7 +136,7 @@ So the final answer is: October 28, 2012
 """
 
 
-QUERY_GENERATION_SYSTEM_PROMPT = """
+QUERY_GENERATION_CONTRIEVER_SYSTEM_PROMPT = """
 Given an original question and a series of follow-up questions and answers, generate the next logical follow-up question that targets a specific missing piece of information needed to answer the original question.
 The question will be used to retrieve additional information from a knowledge base (e.g., Wikipedia).
 
@@ -209,14 +209,103 @@ When did hurricane sandy hit New York City?
 """
 
 
+QUERY_GENERATION_BM25_SYSTEM_PROMPT = """
+Given an original question and a series of follow-up questions and answers, generate the next logical follow-up question that targets a specific missing piece of information needed to answer the original question.
+The question will be used to retrieve additional information from a knowledge base (e.g., Wikipedia).
+
+Process:
+- You receive:
+  - Main question: <original question>  
+  - Zero or more rounds of:
+    - Follow up: <previous follow up question>  
+    - Document: <top Wikipedia snippet>  
+    - Intermediate answer: <answer to the Follow-up question based on the Document>
+
+- Your task:
+  1. Ask the next logical follow-up question.
+  2. Add keywords that capture the essence of the follow-up question. Also include a few **synonyms** of the keywords.
+  3. Base it solely on gaps in the existing trace.
+  4. Do not repeat information already covered.
+  5. Make sure it targets exactly the missing fact you need to answer the original question.
+  6. Output only the new question and the keywords/synonyms; no explanations or extra text.
+
+Output only the process after the given prompt. Do not repeat the given prompt in your response.
+
+Here are some examples:
+
+# First iteration (no trace)
+## Input
+Main question: What is the major railroad museum located in the location where Andre Bloc lived at his time of death?
+## Output
+Where did André Bloc live when he died? (Keywords/Synonyms: André Bloc, lived, residence, location, death, died)
+
+# First iteration (no trace)
+## Input
+Main question: What is the least popular official language in the country where a spiral viaduct is located in Karin Thomas' birthplace?
+## Output
+Where was Karin Thomas born? (Keywords/Synonyms: Karin Thomas, birthplace, place of birth, born)
+
+# Subsequent iteration (trace present)
+## Input
+Main question: What is the major railroad museum located in the location where Andre Bloc lived at his time of death?
+
+Follow up: Where did André Bloc live when he died?
+Document: André Bloc (Algiers, May 23, 1896 – New Delhi, November 8, 1966) was a French sculptor, magazine editor, and founder of several specialist journals. He founded the "Groupe Espace" in 1949.
+Intermediate answer: André Bloc was living in New Delhi when he died.
+## Output
+What is the name of the major railroad related museum located in New Delhi? (Keywords/Synonyms: railroad, metro, train, museum, New Delhi)
+
+# Subsequent iteration (trace present)
+## Input
+Main question: What is the least popular official language in the country where a spiral viaduct is located in Karin Thomas' birthplace?
+
+Follow up: Where was Karin Thomas born?
+Document: Karin Thomas (born 3 October 1961 in Brusio) was a Swiss cross country skier who competed from 1982 to 1988. She finished sixth in the 4 x 5 km relay at the 1984 Winter Olympics in Sarajevo and fourth in that same event at the 1988 Winter Olympics in Calgary.
+Intermediate answer: Karin Thomas was born in Brusio.
+Follow up: In which country is a spiral viaduct is located in Brusio?
+Document: Brusio spiral viaduct: A signature structure of the World Heritage-listed Bernina railway, it is located near Brusio, in the Canton of Graubünden, Switzerland, and was built to limit the railway's gradient at that location within its specified maximum of 7%.
+Intermediate answer: The Brusio spiral viaduct is located in Switzerland.
+## Output
+What is the least popular official language of Switzerland? (Keywords/Synonyms: least, less, small, popular, spoken, prevalent, official, language, Switzerland)
+
+# Subsequent iteration (trace present)
+## Input
+Main question: When did hurricane Sandy hit the city where The Dealers' performer was born?
+
+Follow up: Who is the performer of The Dealers?
+Document: The Dealers is a 1964 album by jazz musician Mal Waldron released on Status Records, catalogue 8316. The album consists of unreleased takes from two sessions that resulted in two prior albums. "Blue Calypso" and "Falling In Love With Love" are from the April 19, 1957 session that resulted in half of 1957 Waldron's "Mal/2" album; these tracks can currently be found as additional tracks on the CD reissue of that album. "Dealin'" and "Wheelin" are from a September 20, 1957 session, and are alternate takes of tracks originally released on the 1958 "Wheelin' & Dealin'" album (Prestige PRLP 7131); these tracks can currently be found as additional tracks on the CD reissue of that album. All tracks are also available as part of the 2009 John Coltrane's box set "Side Steps".
+Intermediate answer: The Dealers is an album by Mal Waldron.
+Follow up: Where was Mal Waldron born?
+Document: Malcolm Earl "Mal" Waldron (August 16, 1925 – December 2, 2002) was an American jazz pianist, composer, and arranger. Mal Waldron was born in New York City on August 16, 1925, to West Indian immigrants. His father was a mechanical engineer who worked on the Long Island Rail Road. The family moved to Jamaica, Queens when Mal was four years old. Waldron's parents discouraged his initial interest in jazz, but he was able to maintain it by listening to swing on the radio.
+Intermediate answer: Mal Waldron was born in New York City.
+## Output
+When did hurricane sandy hit New York City? (Keywords/Synonyms: hurricane sandy, New York City)
+"""
+
+
 QUERY_GENERATION_USER_PROMPT = "Respond with a simple follow-up question that will help answer the main question, do not explain yourself or output anything else."
 
 
-def gen_retriever_query_prompt(question, trace):
+def gen_contriever_query_prompt(question, trace):
     chat = [
         {
             "role": "system",
-            "content": QUERY_GENERATION_SYSTEM_PROMPT,
+            "content": QUERY_GENERATION_CONTRIEVER_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": "Main question: " + question.strip() + "\n\n" + trace.strip() + "\n\n" + QUERY_GENERATION_USER_PROMPT,
+        },
+    ]
+
+    return chat
+
+
+def gen_bm25_query_prompt(question, trace):
+    chat = [
+        {
+            "role": "system",
+            "content": QUERY_GENERATION_BM25_SYSTEM_PROMPT,
         },
         {
             "role": "user",
