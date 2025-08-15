@@ -34,7 +34,7 @@ def run_batch(
     max_iterations: int = 5,
     max_search: int = 10,
     search_batch_size: int = 16,
-    max_docs: int = 4,
+    max_docs: int = 1,
     allow_duplicate_docs: bool = False,
     traces_path: str = None,
     stop_log_path: str = None,
@@ -249,7 +249,8 @@ def parse_args():
     retriever_group.add_argument("--bm25-index-path-dir", type=str, help="BM25 index path directory")
     retriever_group.add_argument("--bm25-k1", type=float, default=1.5, help="BM25 k1 parameter")
     retriever_group.add_argument("--bm25-b", type=float, default=0.8, help="BM25 b parameter")
-    retriever_group.add_argument("--bm25-epsilon", type=float, default=0.2, help="BM25 epsilon parameter")
+    retriever_group.add_argument("--bm25-method", type=str, default="lucene", choices=["lucene", "robertson", "atire", "bm25l", "bm25+"], help="BM25 variant method")
+    retriever_group.add_argument("--bm25-use-mmap", action="store_true", help="Use memory mapping for large BM25 indices")
 
     vllm_group = parser.add_argument_group("vLLM Options")
     vllm_group.add_argument("--vllm-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for vLLM")
@@ -339,9 +340,11 @@ def main(args: argparse.Namespace):
         retriever = BM25Retriever(
             passages,
             index_path_dir=index_path_dir,
+            save_or_load_index=True,  
             k1=args.bm25_k1,
             b=args.bm25_b,
-            epsilon=args.bm25_epsilon,
+            method=args.bm25_method,
+            use_mmap=args.bm25_use_mmap,
         )
     else:
         raise ValueError(f"Unknown retriever type: {args.retriever_type}")
