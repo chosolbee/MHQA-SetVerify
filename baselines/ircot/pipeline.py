@@ -45,7 +45,7 @@ def run_batch(
     batch_history_indices = [[] for _ in range(len(questions))]
     traces = ["" for _ in questions]
 
-    search_queries = questions.copy()
+    search_queries = [question[fields["question"]] for question in questions]
 
     iter_count = 0
     stop_logs = []
@@ -86,14 +86,14 @@ def run_batch(
         rationales = reasoner.batch_generate_rationales(questions, batch_history, traces, fields)
 
         if log_trace:
-            print(f"\n========== Iteration {iter_count} ==========")
+            print(f"\n========== Iteration {iter_count} ==========", flush=True)
             for question, trace, docs, rationale in zip(questions, traces, batch_selected_docs, rationales):
-                print(f"[TRACE] QID={question[fields['id']]}")
-                print(f"|  Question: {question[fields['question']]}")
-                print(f"|  Trace: {trace}")
+                print(f"[TRACE] QID={question[fields['id']]}", flush=True)
+                print(f"|  Question: {question[fields['question']]}", flush=True)
+                print(f"|  Previous Trace: {trace}", flush=True)
                 for doc in docs:
-                    print(f"|  Document: {doc['title']}: {doc['text'][:100]}...")
-                print(f"|  Generated Rationale: {rationale}\n")
+                    print(f"|  Document: {doc['title']}: {doc['text'][:100]}...", flush=True)
+                print(f"|  Generated Rationale: {rationale}\n", flush=True)
 
         next_questions = []
         next_batch_history = []
@@ -130,9 +130,9 @@ def run_batch(
         batch_history_indices = next_batch_history_indices
         traces = next_traces
 
-        print(f"Iteration {iter_count} completed in {time.time() - start_time:.2f} seconds")
-        print(f"Remaining questions: {len(questions)}")
-        print(f"Completed questions: {len(final_questions)}\n")
+        print(f"Iteration {iter_count} completed in {time.time() - start_time:.2f} seconds", flush=True)
+        print(f"Remaining questions: {len(questions)}", flush=True)
+        print(f"Completed questions: {len(final_questions)}\n", flush=True)
 
     if qa_reader is not None:
         final_predictions = qa_reader.batch_generate_answers(final_questions, final_batch_history, fields)
@@ -140,27 +140,29 @@ def run_batch(
         final_predictions = [""] * len(final_questions)
 
     if log_trace:
-        print("\n========== Final Questions and History ==========")
+        print("\n========== Final Questions and History ==========", flush=True)
         for question, history, prediction in zip(final_questions, final_batch_history, final_predictions):
-            print(f"1. Question: {question[fields['question']]}")
-            print("2. History:")
+            print(f"1. Question: {question[fields['question']]}", flush=True)
+            print("2. History:", flush=True)
             for doc in history:
-                print(f"|  {doc['title']}: {doc['text']}")
-            print(f"3. Prediction: {prediction}\n")
+                print(f"|  {doc['title']}: {doc['text']}", flush=True)
+            print(f"3. Prediction: {prediction}\n", flush=True)
+            print(f"4. Answer: {question[fields['answer']]}", flush=True)
 
     em_list, precision_list, recall_list, f1_list = compute_retrieval_metrics(final_questions, final_batch_history, stop_logs, fields)
-    ans_em_list, ans_f1_list = compute_answer_metrics(final_questions, final_predictions, fields)
+    ans_em_list, ans_f1_list, ans_acc_list = compute_answer_metrics(final_questions, final_predictions, fields)
 
     metrics = {
         "retrieval": {
             "em": em_list,
             "precision": precision_list,
             "recall": recall_list,
-            "f1": f1_list
+            "f1": f1_list,
         },
         "answer": {
             "em": ans_em_list,
-            "f1": ans_f1_list
+            "f1": ans_f1_list,
+            "acc": ans_acc_list,
         }
     }
 
@@ -170,10 +172,10 @@ def run_batch(
                 f.write(json.dumps(log, ensure_ascii=False) + '\n')
 
     if traces_path:
-        all_ans_em_list, all_ans_f1_list = compute_all_answer_metrics(final_questions, final_predictions, fields)
+        all_ans_em_list, all_ans_f1_list, all_ans_acc_list = compute_all_answer_metrics(final_questions, final_predictions, fields)
         with open(traces_path, 'a', encoding='utf-8') as f:
-            for question, history, history_indices, trace, prediction, em, f1 in zip(
-                final_questions, final_batch_history, final_batch_history_indices, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list
+            for question, history, history_indices, trace, prediction, em, f1, acc in zip(
+                final_questions, final_batch_history, final_batch_history_indices, final_traces, final_predictions, all_ans_em_list, all_ans_f1_list, all_ans_acc_list
             ):
                 info = {
                     "question_id": question[fields["id"]],
@@ -187,6 +189,7 @@ def run_batch(
                     "prediction": prediction,
                     "em": em,
                     "f1": f1,
+                    "acc": acc,
                 }
                 f.write(json.dumps(info, ensure_ascii=False) + '\n')
 
@@ -256,6 +259,7 @@ def parse_args():
     main_group.add_argument("--batch-size", type=int, default=32, help="Batch size for processing questions")
     main_group.add_argument("--max-iterations", type=int, default=10, help="Maximum number of iterations")
     main_group.add_argument("--traces-path", type=str, help="Path to save traces")
+    main_group.add_argument("--stop-log-path", type=str, default=None, help="Optional JSONL path; Path to the JSONL file where stopping logs are written")
     main_group.add_argument("--log-trace", action="store_true", help="Enable detailed trace logging")
     main_group.add_argument("--seed", type=int, default=42, help="Random Seed")
 
@@ -281,7 +285,7 @@ def main(args: argparse.Namespace):
         retriever = BM25Retriever(
             passages,
             index_path_dir=index_path_dir,
-            save_or_load_index=True,  
+            save_or_load_index=True,
             k1=args.bm25_k1,
             b=args.bm25_b,
             method=args.bm25_method,
@@ -320,23 +324,23 @@ def main(args: argparse.Namespace):
         icl_examples = "\n".join([line for line in icl_examples.split("\n") if not line.startswith("# METADATA")])
 
     reasoner = Reasoner(
-        llm=vllm_agent if args.qg_provider == "vllm" else openai_config,
+        llm=vllm_agent if args.reasoner_provider == "vllm" else openai_config,
         icl_examples=icl_examples,
-        max_gen_length=args.qg_max_gen_length,
-        temperature=args.qg_temperature,
-        top_p=args.qg_top_p,
-        provider=args.qg_provider,
+        max_gen_length=args.reasoner_max_gen_length,
+        temperature=args.reasoner_temperature,
+        top_p=args.reasoner_top_p,
+        provider=args.reasoner_provider,
     )
 
     qa_reader = None
     if not args.qareader_disable:
         qa_reader = QAReader(
-            llm=vllm_agent if args.qg_provider == "vllm" else openai_config,
+            llm=vllm_agent if args.qareader_provider == "vllm" else openai_config,
             icl_examples=icl_examples,
-            max_gen_length=args.qg_max_gen_length,
-            temperature=args.qg_temperature,
-            top_p=args.qg_top_p,
-            provider=args.qg_provider,
+            max_gen_length=args.qareader_max_gen_length,
+            temperature=args.qareader_temperature,
+            top_p=args.qareader_top_p,
+            provider=args.qareader_provider,
         )
 
     reranker = None
@@ -363,18 +367,19 @@ def main(args: argparse.Namespace):
             "em": [[], [], []],
             "precision": [[], [], []],
             "recall": [[], [], []],
-            "f1": [[], [], []]
+            "f1": [[], [], []],
         },
         "answer": {
             "em": [[], [], []],
-            "f1": [[], [], []]
+            "f1": [[], [], []],
+            "acc": [[], [], []],
         }
     }
 
     total_batches = (len(questions) + args.batch_size - 1) // args.batch_size
     for i in tqdm(range(0, len(questions), args.batch_size)):
         batch_questions = questions[i:i + args.batch_size]
-        print(f"\nProcessing batch {i // args.batch_size + 1} of {total_batches}...\n")
+        print(f"\nProcessing batch {i // args.batch_size + 1} of {total_batches}...\n", flush=True)
 
         batch_metrics = run_batch(
             retriever=retriever,
@@ -409,6 +414,7 @@ def main(args: argparse.Namespace):
         print("\n===== CUMULATIVE ANSWER METRICS =====")
         print_metrics(all_metrics["answer"]["em"], "EM")
         print_metrics(all_metrics["answer"]["f1"], "F1")
+        print_metrics(all_metrics["answer"]["acc"], "Acc")
 
     print("\n===== FINAL RETRIEVAL METRICS =====")
     print_metrics(all_metrics["retrieval"]["em"], "EM")
@@ -419,6 +425,7 @@ def main(args: argparse.Namespace):
     print("\n===== FINAL ANSWER METRICS =====")
     print_metrics(all_metrics["answer"]["em"], "EM")
     print_metrics(all_metrics["answer"]["f1"], "F1")
+    print_metrics(all_metrics["answer"]["acc"], "Acc")
 
     print("\nAll done!")
 

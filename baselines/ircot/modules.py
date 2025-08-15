@@ -1,5 +1,4 @@
 import os
-import sys
 import asyncio
 from nltk.tokenize import sent_tokenize
 from pipeline.modules import AsyncOpenAIProcessor
@@ -22,7 +21,7 @@ class Reasoner:
 
     def _gen_ircot_prompt(self, question, history, trace, fields):
         return self.icl_examples + "\n\n" + \
-            "\n\n".join([f"Wikipedia Title: {doc[fields['title']]}\n{doc[fields['text']]}" for doc in history]) + \
+            "\n\n".join([f"Wikipedia Title: {doc['title']}\n{doc['text']}" for doc in history]) + \
             "\n\n" + "Q: " + question[fields["question"]] + "\n" + "A: " + trace
 
     def _process_prompts_vllm(self, prompts):
@@ -80,7 +79,7 @@ class QAReader:
 
     def _gen_ircot_prompt(self, question, history, fields):
         return self.icl_examples + "\n\n" + \
-            "\n\n".join([f"Wikipedia Title: {doc[fields['title']]}\n{doc[fields['text']]}" for doc in history]) + \
+            "\n\n".join([f"Wikipedia Title: {doc['title']}\n{doc['text']}" for doc in history]) + \
             "\n\n" + "Q: " + question[fields["question"]] + "\n" + "A: "
 
     def _process_prompts_vllm(self, prompts):
@@ -104,11 +103,11 @@ class QAReader:
                 temperature=self.temperature,
                 top_p=self.top_p,
             )
-    
-    def extract_answer(self, rationale):
+
+    def _extract_answer(self, rationale):
         if "answer is: " in rationale.lower():
             idx = rationale.lower().find("answer is: ")
-            return rationale[idx + len("answer is: "):].strip()
+            return rationale[idx + len("answer is: "):].split("\n")[0].strip()
         else:
             return rationale
 
@@ -125,4 +124,4 @@ class QAReader:
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
 
-        return [self.extract_answer(rationale) for rationale in rationales]
+        return [self._extract_answer(rationale) for rationale in rationales]
