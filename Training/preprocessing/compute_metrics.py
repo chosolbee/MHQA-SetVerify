@@ -7,13 +7,22 @@ import numpy as np
 import torch
 from vllm import LLM, SamplingParams
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
-from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
+from pipeline.answer_generator.prompts import gen_final_answer_prompt
 from pipeline.utils import compute_all_answer_metrics
+
+
+def extract_answer(output):
+    if "answer is: " in output.lower():
+        idx = output.lower().find("answer is: ")
+        return output[idx + len("answer is: "):].split("\n")[0].strip()
+    else:
+        return output
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Compute answer scores from the dataset")
     parser.add_argument("--input-path", type=str, required=True, help="Path to the input JSONL file")
+    parser.add_argument("--icl-examples-path", type=str, required=True, help="Path to ICL examples")
     parser.add_argument("--output-path", type=str, required=True, help="Path to the output JSONL file")
     parser.add_argument("--batch-size", type=int, default=512, help="Batch size for processing")
     parser.add_argument("--repeat-size", type=int, default=8, help="Number of times to repeat each trace")
@@ -58,6 +67,10 @@ if __name__ == "__main__":
     with open(args.input_path, "r", encoding="utf-8") as f:
         traces = [json.loads(line.strip()) for line in f]
 
+    with open(args.icl_examples_path, "r", encoding="utf-8") as f:
+        icl_examples = f.read()
+        icl_examples = "\n".join([line for line in icl_examples.split("\n") if not line.startswith("# METADATA")])
+
     open(args.output_path, "w", encoding="utf-8").close()
 
     print(f"Number of prompts: {len(traces)}", flush=True)
@@ -68,35 +81,42 @@ if __name__ == "__main__":
     for i in tqdm(range(0, len(traces), effective_batch_size)):
         batch_traces = traces[i:i+effective_batch_size]
         batch_traces_repeated = [trace for trace in batch_traces for _ in range(args.repeat_size)]
-        if args.use_docs_only:
-            batch_prompts_repeated = [
-                gen_final_answer_docs_only_prompt(trace["question"], "\n".join(f"Document: {doc}" for doc in trace["history"]))
-                for trace in batch_traces_repeated
-            ]
-        else:
-            batch_prompts_repeated = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces_repeated]
+
         batch_answers_repeated = [{
             "answer": trace["answers"][0],
             "answer_aliases": trace["answers"][1:],
         } for trace in batch_traces_repeated]
 
-        outputs = model.chat(batch_prompts_repeated, sampling_params, use_tqdm=False)
-        batch_predictions_repeated = [output.outputs[0].text.strip() for output in outputs]
+        if args.use_docs_only:
+            batch_prompts_repeated = [
+                icl_examples + "\n\n" + \
+                "\n\n".join([f"Wikipedia Title: {doc['title']}\n{doc['text']}" for doc in trace["history"]]) + \
+                "\n\n" + "Q: " + trace["question"] + "\n" + "A: "
+                for trace in batch_traces_repeated
+            ]
+            outputs = model.generate(batch_prompts_repeated, sampling_params, use_tqdm=False)
+            batch_predictions_repeated = [extract_answer(output.outputs[0].text.strip()) for output in outputs]
+        else:
+            batch_prompts_repeated = [gen_final_answer_prompt(trace["question"], trace["trace"]) for trace in batch_traces_repeated]
+            outputs = model.chat(batch_prompts_repeated, sampling_params, use_tqdm=False)
+            batch_predictions_repeated = [output.outputs[0].text.strip() for output in outputs]
 
         fields = {
             "answer": "answer",
             "answer_aliases": "answer_aliases",
         }
 
-        em_list, f1_list = compute_all_answer_metrics(batch_answers_repeated, batch_predictions_repeated, fields)
+        em_list, f1_list, acc_list = compute_all_answer_metrics(batch_answers_repeated, batch_predictions_repeated, fields)
 
         avg_em_list = np.mean(np.array(em_list).reshape(-1, args.repeat_size), axis=1)
         avg_f1_list = np.mean(np.array(f1_list).reshape(-1, args.repeat_size), axis=1)
+        avg_acc_list = np.mean(np.array(acc_list).reshape(-1, args.repeat_size), axis=1)
 
         with open(args.output_path, "a", encoding="utf-8") as f:
-            for trace, em, f1 in zip(batch_traces, avg_em_list, avg_f1_list):
+            for trace, em, f1, acc in zip(batch_traces, avg_em_list, avg_f1_list, avg_acc_list):
                 trace["em"] = em
                 trace["f1"] = f1
+                trace["acc"] = acc
                 f.write(json.dumps(trace, ensure_ascii=False) + "\n")
 
     print(f"Processing complete. Output written to {args.output_path}")
