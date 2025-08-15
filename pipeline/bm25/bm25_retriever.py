@@ -2,8 +2,6 @@ import argparse
 import os
 import sys
 from typing import List, Union
-import json
-
 import bm25s
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from contriever.utils.utils import load_passages
@@ -31,17 +29,19 @@ class BM25Retriever(object):
         self.b = b
         self.method = method
         self.use_mmap = use_mmap
-        
+
         if index_path_dir is None:
-            index_path_dir = os.path.join(os.path.dirname(os.path.dirname(passage_path)), "bm25s_index")
+            index_path_dir = os.path.join(os.path.dirname(os.path.dirname(passage_path)), "bm25_index")
         self.index_path = os.path.join(index_path_dir, "bm25s_index")
+
+        self._load_passages_and_passage_map(passage_path)
 
         if save_or_load_index and self._index_exists():
             print(f"Loading index from {self.index_path}")
             self._load_index()
         else:
             print(f"Building index from {passage_path}")
-            self._build_index(passage_path)
+            self._build_index()
             if save_or_load_index:
                 print(f"Saving index to {self.index_path}")
                 self._save_index()
@@ -49,37 +49,31 @@ class BM25Retriever(object):
     def _index_exists(self):
         return os.path.exists(self.index_path) and os.path.isdir(self.index_path)
 
-    def _build_index(self, passage_path):
-        passages = load_passages(passage_path)
-        print(f"Loaded {len(passages)} passages for indexing.")
-        
+    def _load_passages_and_passage_map(self, passage_path: str):
+        self.passages = load_passages(passage_path)
+        self.passage_map = {p["id"]: p for p in self.passages}
+        print(f"Loaded {len(self.passages)} passages from {passage_path}.")
+
+    def _build_index(self):
         corpus = []
-        for passage in passages:
+        for passage in self.passages:
             title = passage.get('title', '').strip()
             text = passage.get('text', '').strip()
             full_text = f"{title} {text}".strip() if title else text
             corpus.append(full_text)
-        
+
         print("Tokenizing corpus...")
         corpus_tokens = bm25s.tokenize(corpus, stopwords="en", return_ids=False)
-        
+
         print("Creating BM25S model and indexing...")
         self.bm25 = bm25s.BM25(k1=self.k1, b=self.b, method=self.method)
         self.bm25.index(corpus_tokens)
-        
-        self.passages = passages
-        self.passage_map = {p["id"]: p for p in self.passages}
 
         print(f"BM25S indexing completed. Method: {self.method}")
 
     def _save_index(self):
         os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
         self.bm25.save(self.index_path)
-        
-        import json
-        passages_file = os.path.join(self.index_path, "passages.json")
-        with open(passages_file, 'w', encoding='utf-8') as f:
-            json.dump(self.passages, f, ensure_ascii=False, indent=2)
 
     def _load_index(self):
         self.bm25 = bm25s.BM25.load(
@@ -87,27 +81,20 @@ class BM25Retriever(object):
             load_corpus=False,
             mmap=self.use_mmap
         )
-        
-        passages_file = os.path.join(self.index_path, "passages.json")
-        if os.path.exists(passages_file):
-            with open(passages_file, 'r', encoding='utf-8') as f:
-                self.passages = json.load(f)
-        
-        self.passage_map = {p["id"]: p for p in self.passages}
 
         print(f"BM25S index loaded. Method: {self.bm25.method}, Memory-mapped: {self.use_mmap}")
 
     def search(self, query: Union[str, List[str]], top_k: int = 10):
         query = [query] if isinstance(query, str) else query
         query_tokens = bm25s.tokenize(query, stopwords="en", return_ids=False)
-        
+
         docs, scores = self.bm25.retrieve(
             query_tokens,
             corpus=self.passages,
             k=top_k,
             show_progress=False
         )
-        
+
         results = []
         for row_docs, row_scores in zip(docs, scores):
             doc_list = []
