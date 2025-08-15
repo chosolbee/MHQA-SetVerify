@@ -6,7 +6,6 @@ from tqdm import tqdm
 import numpy as np
 import torch
 from vllm import LLM, SamplingParams
-from ..utils import extract_documents_only
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final_answer_docs_only_prompt
 from pipeline.utils import compute_all_answer_metrics
@@ -29,8 +28,8 @@ def parse_args():
 
     final_answer_generator_group = parser.add_argument_group("Final Answer Generator Options")
     final_answer_generator_group.add_argument("--fag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
-    final_answer_generator_group.add_argument("--fag-temperature", type=float, default=0.7, help="Temperature for answer generator")
-    final_answer_generator_group.add_argument("--fag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
+    final_answer_generator_group.add_argument("--fag-temperature", type=float, default=0.0, help="Temperature for answer generator")
+    final_answer_generator_group.add_argument("--fag-top-p", type=float, default=1.0, help="Top-p sampling for answer generator")
 
     return parser.parse_args()
 
@@ -71,7 +70,7 @@ if __name__ == "__main__":
         batch_traces_repeated = [trace for trace in batch_traces for _ in range(args.repeat_size)]
         if args.use_docs_only:
             batch_prompts_repeated = [
-                gen_final_answer_docs_only_prompt(trace["question"], extract_documents_only(trace["trace"]))
+                gen_final_answer_docs_only_prompt(trace["question"], "\n".join(f"Document: {doc}" for doc in trace["history"]))
                 for trace in batch_traces_repeated
             ]
         else:

@@ -7,7 +7,6 @@ import pandas as pd
 import torch
 from transformers import set_seed
 from vllm import LLM
-from ..utils import extract_documents_only
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.modules import AsyncOpenAIConfig
 from pipeline.stop_decider import StopDecider
@@ -31,7 +30,7 @@ def parse_args():
     vllm_group.add_argument("--vllm-tp-size", type=int, default=1, help="Tensor parallel size for vLLM")
     vllm_group.add_argument("--vllm-quantization", type=str, help="Quantization method for vLLM")
     vllm_group.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.9, help="GPU memory utilization for vLLM")
-    vllm_group.add_argument("--vllm-max-model-len", type=int, default=8192, help="Maximum model length for vLLM")
+    vllm_group.add_argument("--vllm-max-model-len", type=int, help="Maximum model length for vLLM")
 
     openai_group = parser.add_argument_group("OpenAI Options")
     openai_group.add_argument("--openai-model-id", type=str, default="gpt-4o-mini-2024-07-18", help="Model ID for OpenAI")
@@ -45,8 +44,8 @@ def parse_args():
 
     stop_decider_group = parser.add_argument_group("Stop Decider Options")
     stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=200, help="Maximum generation length for stop decider")
-    stop_decider_group.add_argument("--sd-temperature", type=float, default=0.1, help="Temperature for stop decider")
-    stop_decider_group.add_argument("--sd-top-p", type=float, default=0.9, help="Top-p sampling for stop decider")
+    stop_decider_group.add_argument("--sd-temperature", type=float, default=0.0, help="Temperature for stop decider")
+    stop_decider_group.add_argument("--sd-top-p", type=float, default=1.0, help="Top-p sampling for stop decider")
     stop_decider_group.add_argument("--sd-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for stop decider")
 
     main_group = parser.add_argument_group("Main Options")
@@ -105,7 +104,7 @@ if __name__ == "__main__":
         batch_traces = traces[i:i + args.batch_size]
         batch_questions = [{"question": trace["question"]} for trace in batch_traces]
         if args.use_docs_only:
-            batch_trace_texts = [extract_documents_only(trace["trace"]) for trace in batch_traces]
+            batch_trace_texts = ["\n".join(f"Document: {doc}" for doc in trace["history"]) for trace in batch_traces]
         else:
             batch_trace_texts = [trace["trace"] for trace in batch_traces]
 
