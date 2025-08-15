@@ -2,13 +2,13 @@ import os
 import sys
 import asyncio
 from typing import List, Dict, Any, Tuple
-from .prompts import gen_retriever_query_prompt
+from .prompts import gen_contriever_query_prompt, gen_bm25_query_prompt
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from modules import AsyncOpenAIProcessor
 
 
 class QueryGenerator:
-    def __init__(self, llm, max_gen_length=200, temperature=0.7, top_p=0.9, provider="vllm"):
+    def __init__(self, llm, max_gen_length=200, temperature=0.7, top_p=0.9, provider="vllm", retriever_type="contriever"):
         os.environ['MKL_THREADING_LAYER']='GNU'
 
         self.llm = llm
@@ -18,6 +18,7 @@ class QueryGenerator:
         self.top_p = top_p
 
         self.provider = provider
+        self.retriever_type = retriever_type
 
         print(f"Query Generator - {self.provider} loaded successfully.")
 
@@ -54,10 +55,18 @@ class QueryGenerator:
             traces: List[str],
             fields: Dict[str, str]
         ) -> Tuple[List[str], List[str]]:
-        prompts = [
-            gen_retriever_query_prompt(question[fields["question"]], trace)
-            for question, trace in zip(questions, traces)
-        ]
+        if self.retriever_type == "contriever":
+            prompts = [
+                gen_contriever_query_prompt(question[fields["question"]], trace)
+                for question, trace in zip(questions, traces)
+            ]
+        elif self.retriever_type == "bm25":
+            prompts = [
+                gen_bm25_query_prompt(question[fields["question"]], trace)
+                for question, trace in zip(questions, traces)
+            ]
+        else:
+            raise ValueError(f"Unsupported retriever type: {self.retriever_type}")
 
         if self.provider == "vllm":
             outputs = self._process_prompts_vllm(prompts)
@@ -72,7 +81,12 @@ class QueryGenerator:
             gen_text = output
             query = self.extract_query(gen_text)
             new_traces.append(trace + "\nFollow up: " + query.strip())
-            queries.append(query)
+            if self.retriever_type == "contriever":
+                queries.append(query)
+            elif self.retriever_type == "bm25":
+                queries.append(query.replace("Keywords/Synonyms: ", ""))
+            else:
+                raise ValueError(f"Unsupported retriever type: {self.retriever_type}")
 
         return new_traces, queries
 
