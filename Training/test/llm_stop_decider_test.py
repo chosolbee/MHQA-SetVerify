@@ -44,8 +44,8 @@ def parse_args():
 
     stop_decider_group = parser.add_argument_group("Stop Decider Options")
     stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=200, help="Maximum generation length for stop decider")
-    stop_decider_group.add_argument("--sd-temperature", type=float, default=0.1, help="Temperature for stop decider")
-    stop_decider_group.add_argument("--sd-top-p", type=float, default=0.9, help="Top-p sampling for stop decider")
+    stop_decider_group.add_argument("--sd-temperature", type=float, default=0.0, help="Temperature for stop decider")
+    stop_decider_group.add_argument("--sd-top-p", type=float, default=1.0, help="Top-p sampling for stop decider")
     stop_decider_group.add_argument("--sd-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for stop decider")
 
     main_group = parser.add_argument_group("Main Options")

@@ -28,8 +28,8 @@ def parse_args():
 
     final_answer_generator_group = parser.add_argument_group("Final Answer Generator Options")
     final_answer_generator_group.add_argument("--fag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
-    final_answer_generator_group.add_argument("--fag-temperature", type=float, default=0.7, help="Temperature for answer generator")
-    final_answer_generator_group.add_argument("--fag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
+    final_answer_generator_group.add_argument("--fag-temperature", type=float, default=0.0, help="Temperature for answer generator")
+    final_answer_generator_group.add_argument("--fag-top-p", type=float, default=1.0, help="Top-p sampling for answer generator")
 
     return parser.parse_args()
 

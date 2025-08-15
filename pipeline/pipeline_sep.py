@@ -244,13 +244,12 @@ def parse_args():
     retriever_group.add_argument("--max-docs", type=int, default=1, help="Maximum number of documents to select from retrieved passages")
     retriever_group.add_argument("--allow-duplicate-docs", action="store_true", help="Allow duplicate documents in the retrieved passages")
     # contriever
-    retriever_group.add_argument("--contriever-embeddings", type=str, help="Document embedding path")    
+    retriever_group.add_argument("--contriever-embeddings", type=str, help="Document embedding path")
     # bm25
     retriever_group.add_argument("--bm25-index-path-dir", type=str, help="BM25 index path directory")
     retriever_group.add_argument("--bm25-k1", type=float, default=1.5, help="BM25 k1 parameter")
     retriever_group.add_argument("--bm25-b", type=float, default=0.8, help="BM25 b parameter")
     retriever_group.add_argument("--bm25-epsilon", type=float, default=0.2, help="BM25 epsilon parameter")
-
 
     vllm_group = parser.add_argument_group("vLLM Options")
     vllm_group.add_argument("--vllm-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for vLLM")
@@ -271,8 +270,8 @@ def parse_args():
 
     query_generator_group = parser.add_argument_group("Query Generator Options")
     query_generator_group.add_argument("--qg-max-gen-length", type=int, default=200, help="Maximum generation length for query generator")
-    query_generator_group.add_argument("--qg-temperature", type=float, default=0.7, help="Temperature for query generator")
-    query_generator_group.add_argument("--qg-top-p", type=float, default=0.9, help="Top-p sampling for query generator")
+    query_generator_group.add_argument("--qg-temperature", type=float, default=0.0, help="Temperature for query generator")
+    query_generator_group.add_argument("--qg-top-p", type=float, default=1.0, help="Top-p sampling for query generator")
     query_generator_group.add_argument("--qg-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for query generator")
 
     reranker_group = parser.add_argument_group("Reranker Options")
@@ -283,21 +282,21 @@ def parse_args():
 
     intermediate_answer_generator_group = parser.add_argument_group("Intermediate Answer Generator Options")
     intermediate_answer_generator_group.add_argument("--iag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
-    intermediate_answer_generator_group.add_argument("--iag-temperature", type=float, default=0.7, help="Temperature for answer generator")
-    intermediate_answer_generator_group.add_argument("--iag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
+    intermediate_answer_generator_group.add_argument("--iag-temperature", type=float, default=0.0, help="Temperature for answer generator")
+    intermediate_answer_generator_group.add_argument("--iag-top-p", type=float, default=1.0, help="Top-p sampling for answer generator")
     intermediate_answer_generator_group.add_argument("--iag-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for answer generator")
 
     final_answer_generator_group = parser.add_argument_group("Final Answer Generator Options")
     final_answer_generator_group.add_argument("--fag-max-gen-length", type=int, default=400, help="Maximum generation length for answer generator")
-    final_answer_generator_group.add_argument("--fag-temperature", type=float, default=0.7, help="Temperature for answer generator")
-    final_answer_generator_group.add_argument("--fag-top-p", type=float, default=0.9, help="Top-p sampling for answer generator")
+    final_answer_generator_group.add_argument("--fag-temperature", type=float, default=0.0, help="Temperature for answer generator")
+    final_answer_generator_group.add_argument("--fag-top-p", type=float, default=1.0, help="Top-p sampling for answer generator")
     final_answer_generator_group.add_argument("--fag-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for answer generator")
     final_answer_generator_group.add_argument("--fag-disable", action="store_true", help="Disable final answer generation")
 
     stop_decider_group = parser.add_argument_group("Stop Decider Options")
     stop_decider_group.add_argument("--sd-max-gen-length", type=int, default=200, help="Maximum generation length for stop decider")
-    stop_decider_group.add_argument("--sd-temperature", type=float, default=0.1, help="Temperature for stop decider")
-    stop_decider_group.add_argument("--sd-top-p", type=float, default=0.9, help="Top-p sampling for stop decider")
+    stop_decider_group.add_argument("--sd-temperature", type=float, default=0.0, help="Temperature for stop decider")
+    stop_decider_group.add_argument("--sd-top-p", type=float, default=1.0, help="Top-p sampling for stop decider")
     stop_decider_group.add_argument("--sd-provider", type=str, default="vllm", choices=["vllm", "openai", "nostop"], help="Provider for stop decider")
 
     main_group = parser.add_argument_group("Main Options")
@@ -378,6 +377,7 @@ def main(args: argparse.Namespace):
         temperature=args.qg_temperature,
         top_p=args.qg_top_p,
         provider=args.qg_provider,
+        retriever_type=args.retriever_type,
     )
 
     reranker = None
@@ -461,6 +461,7 @@ def main(args: argparse.Namespace):
             max_iterations=args.max_iterations,
             max_search=args.max_search,
             search_batch_size=args.search_batch_size,
+            max_docs=args.max_docs,
             traces_path=args.traces_path,
             stop_log_path=args.stop_log_path,
             log_trace=args.log_trace,
