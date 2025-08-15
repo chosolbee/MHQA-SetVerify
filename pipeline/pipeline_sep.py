@@ -302,7 +302,7 @@ def parse_args():
 
     main_group = parser.add_argument_group("Main Options")
     main_group.add_argument("--dataset", type=str, required=True, choices=DATASET_PATHS.keys(), help="Dataset name")
-    main_group.add_argument("--dataset-type", type=str, required=True, choices=["train", "dev", "test"], help="Dataset type")
+    main_group.add_argument("--dataset-type", type=str, required=True, choices=["train", "dev", "test", "eval_subsampled", "test_subsampled"], help="Dataset type")
     main_group.add_argument("--dataset-path", type=str, help="Dataset file path")
     main_group.add_argument("--batch-size", type=int, default=32, help="Batch size for processing questions")
     main_group.add_argument("--max-iterations", type=int, default=5, help="Maximum number of iterations")
