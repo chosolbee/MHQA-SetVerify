@@ -46,7 +46,7 @@ class StopDecisionDataset(Dataset):
 
     def _trace_to_encoding(self, trace):
         if self.use_docs_only:
-            filtered_trace = "\n".join(f"Document: {doc}" for doc in trace["history"])
+            filtered_trace = "\n".join(f"Document: {doc['title']}: {doc['text']}" for doc in trace["history"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
         else:
             filtered_trace = trace["trace"]
@@ -137,7 +137,7 @@ def parse_args():
     parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="Model ID for Stop Decider")
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
-    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
+    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1", "acc"], help="Target label for training")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
     parser.add_argument("--use-lora", action="store_true", help="Use LoRA for training")

@@ -81,6 +81,7 @@ def compute_answer_metrics(questions: List[Dict[str, Any]],
                            fields: Dict[str, str]) -> Tuple[List[List[float]], List[List[float]]]:
     em_list = [[], [], []]
     f1_list = [[], [], []]
+    acc_list = [[], [], []]
 
     for question, prediction in zip(questions, predictions):
         hop = len(question.get(fields["supporting_facts"], []))
@@ -93,11 +94,13 @@ def compute_answer_metrics(questions: List[Dict[str, Any]],
 
         em = int(norm_pred in gold_answers)
         f1 = max(token_f1(norm_pred, g) for g in gold_answers)
+        acc = int(any(norm_pred in g for g in gold_answers))
 
         em_list[idx].append(em)
         f1_list[idx].append(f1)
+        acc_list[idx].append(acc)
 
-    return em_list, f1_list
+    return em_list, f1_list, acc_list
 
 
 def compute_all_answer_metrics(questions: List[Dict[str, Any]],
@@ -105,6 +108,7 @@ def compute_all_answer_metrics(questions: List[Dict[str, Any]],
                                fields: Dict[str, str]) -> Tuple[List[float], List[float]]:
     em_list = []
     f1_list = []
+    acc_list = []
 
     for question, prediction in zip(questions, predictions):
         gold_answers = [question[fields["answer"]]] + question.get(fields["answer_aliases"], [])
@@ -114,8 +118,10 @@ def compute_all_answer_metrics(questions: List[Dict[str, Any]],
 
         em = int(norm_pred in gold_answers)
         f1 = max(token_f1(norm_pred, g) for g in gold_answers)
+        acc = int(any(norm_pred in g for g in gold_answers))
 
         em_list.append(em)
         f1_list.append(f1)
+        acc_list.append(acc)
 
-    return em_list, f1_list
+    return em_list, f1_list, acc_list

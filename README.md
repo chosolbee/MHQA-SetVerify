@@ -38,7 +38,8 @@ uv run python -m Training.preprocessing.compute_metrics \
     --input-path {TRACES_PATH} \
     --output-path {TRACES_PATH} \
     --repeat-size 8 \
-    --use-docs-only  # optional
+    --use-docs-only \
+    --icl-examples-path {ICL_EXAMPLES_PATH}  # from IRCoT
 
 uv run python -m Training.compute_labels \
     --input-path {TRACES_PATH} \
@@ -86,7 +87,8 @@ uv run python -m Training.preprocessing.compute_metrics \
     --input-path {TRACES_PATH} \
     --output-path {TRACES_PATH} \
     --repeat-size 1 \
-    --use-docs-only  # optional
+    --use-docs-only \
+    --icl-examples-path {ICL_EXAMPLES_PATH}  # from IRCoT
 ```
 
 ## Tests

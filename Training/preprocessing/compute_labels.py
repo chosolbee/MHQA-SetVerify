@@ -9,7 +9,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Compute answer scores from the dataset")
     parser.add_argument("--input-path", type=str, required=True, help="Path to the input JSONL file")
     parser.add_argument("--output-path", type=str, required=True, help="Path to the output JSONL file")
-    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
+    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1", "acc"], help="Target label for training")
     parser.add_argument("--max-iterations", type=int, default=8, help="Maximum number of iterations to consider for each question")
 
     return parser.parse_args()
