@@ -104,7 +104,7 @@ if __name__ == "__main__":
         batch_traces = traces[i:i + args.batch_size]
         batch_questions = [{"question": trace["question"]} for trace in batch_traces]
         if args.use_docs_only:
-            batch_trace_texts = ["\n".join(f"Document: {doc['title']: {doc['text']}}" for doc in trace["history"]) for trace in batch_traces]
+            batch_trace_texts = ["\n".join(f"Document: {doc['title']}: {doc['text']}" for doc in trace["history"]) for trace in batch_traces]
         else:
             batch_trace_texts = [trace["trace"] for trace in batch_traces]
 
