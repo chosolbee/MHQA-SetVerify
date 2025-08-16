@@ -22,10 +22,10 @@ def extract_answer(output):
 def parse_args():
     parser = argparse.ArgumentParser(description="Compute answer scores from the dataset")
     parser.add_argument("--input-path", type=str, required=True, help="Path to the input JSONL file")
-    parser.add_argument("--icl-examples-path", type=str, required=True, help="Path to ICL examples")
     parser.add_argument("--output-path", type=str, required=True, help="Path to the output JSONL file")
     parser.add_argument("--batch-size", type=int, default=512, help="Batch size for processing")
     parser.add_argument("--repeat-size", type=int, default=8, help="Number of times to repeat each trace")
+    parser.add_argument("--icl-examples-path", type=str, help="Path to ICL examples (Required for docs-only mode)")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
 
     vllm_group = parser.add_argument_group("vLLM Options")
@@ -67,9 +67,10 @@ if __name__ == "__main__":
     with open(args.input_path, "r", encoding="utf-8") as f:
         traces = [json.loads(line.strip()) for line in f]
 
-    with open(args.icl_examples_path, "r", encoding="utf-8") as f:
-        icl_examples = f.read()
-        icl_examples = "\n".join([line for line in icl_examples.split("\n") if not line.startswith("# METADATA")])
+    if args.use_docs_only:
+        with open(args.icl_examples_path, "r", encoding="utf-8") as f:
+            icl_examples = f.read()
+            icl_examples = "\n".join([line for line in icl_examples.split("\n") if not line.startswith("# METADATA")])
 
     open(args.output_path, "w", encoding="utf-8").close()
 
