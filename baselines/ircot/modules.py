@@ -59,7 +59,7 @@ class Reasoner:
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
 
-        return [sent_tokenize(rationale)[0] for rationale in rationales]
+        return [sent_tokenize(rationale)[0] if rationale else "" for rationale in rationales]
 
 
 class QAReader:
