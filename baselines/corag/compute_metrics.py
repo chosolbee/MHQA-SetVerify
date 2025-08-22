@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from vllm import LLM
 from pipeline.utils import compute_all_answer_metrics
-from .modules import QAReader
+from .modules import Generator
 
 FIELDS = {
     "question": "question",
@@ -20,19 +20,18 @@ def parse_args():
     parser.add_argument("--output-path", type=str, required=True, help="Path to the output JSONL file")
     parser.add_argument("--batch-size", type=int, default=512, help="Batch size for processing")
     parser.add_argument("--repeat-size", type=int, default=8, help="Number of times to repeat each trace")
-    parser.add_argument("--icl-examples-path", type=str, help="Path to ICL examples (Required for docs-only mode)")
 
     vllm_group = parser.add_argument_group("vLLM Options")
-    vllm_group.add_argument("--vllm-model-id", type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="Model ID for vLLM")
+    vllm_group.add_argument("--vllm-model-id", type=str, default="corag/CoRAG-Llama3.1-8B-MultihopQA", help="Model ID for vLLM")
     vllm_group.add_argument("--vllm-tp-size", type=int, default=1, help="Tensor parallel size for vLLM")
     vllm_group.add_argument("--vllm-quantization", type=str, help="Quantization method for vLLM")
     vllm_group.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.9, help="GPU memory utilization for vLLM")
     vllm_group.add_argument("--vllm-max-model-len", type=int, help="Maximum model length for vLLM")
 
-    qa_reader_group = parser.add_argument_group("QA Reader Options")
-    qa_reader_group.add_argument("--qareader-max-gen-length", type=int, default=400, help="Maximum generation length for QA reader")
-    qa_reader_group.add_argument("--qareader-temperature", type=float, default=0.0, help="Temperature for QA reader")
-    qa_reader_group.add_argument("--qareader-top-p", type=float, default=1.0, help="Top-p sampling for QA reader")
+    generator_group = parser.add_argument_group("Generator Options")
+    generator_group.add_argument("--generator-max-gen-length", type=int, default=200, help="Maximum generation length for generator")
+    generator_group.add_argument("--generator-temperature", type=float, default=0.0, help="Temperature for generator")
+    generator_group.add_argument("--generator-top-p", type=float, default=1.0, help="Top-p sampling for generator")
 
     return parser.parse_args()
 
@@ -50,17 +49,11 @@ if __name__ == "__main__":
         max_model_len=args.vllm_max_model_len,
     )
 
-    with open(args.icl_examples_path, "r", encoding="utf-8") as f:
-        icl_examples = f.read()
-        icl_examples = "\n".join([line for line in icl_examples.split("\n") if not line.startswith("# METADATA")])
-
-    qa_reader = QAReader(
+    generator = Generator(
         llm=model,
-        icl_examples=icl_examples,
-        max_gen_length=args.qareader_max_gen_length,
-        temperature=args.qareader_temperature,
-        top_p=args.qareader_top_p,
-        provider="vllm",
+        max_gen_length=args.generator_max_gen_length,
+        temperature=args.generator_temperature,
+        top_p=args.generator_top_p,
     )
 
     with open(args.input_path, "r", encoding="utf-8") as f:
@@ -84,8 +77,9 @@ if __name__ == "__main__":
 
         questions = [{"question": trace["question"]} for trace in batch_traces_repeated]
         batch_history = [trace["history"] for trace in batch_traces_repeated]
+        traces_ = [trace["trace"] for trace in batch_traces_repeated]
 
-        batch_predictions_repeated = qa_reader.batch_generate_answers(questions, batch_history, FIELDS)
+        batch_predictions_repeated = generator.batch_generate_final_answers(questions, batch_history, traces_, FIELDS)
 
         em_list, f1_list, acc_list = compute_all_answer_metrics(batch_answers_repeated, batch_predictions_repeated, FIELDS)
 
