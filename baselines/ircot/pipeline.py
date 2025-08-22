@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import random as rd
@@ -5,18 +6,19 @@ import argparse
 from typing import List, Dict, Any, Union
 
 from tqdm import tqdm
+import numpy as np
 import torch
 from transformers import set_seed
 from vllm import LLM
-import numpy as np
+import wandb
 
-from .modules import Reasoner, QAReader
-from config import DEBERTA_MAX_LENGTH, DATASET_PATHS, DATASET_FIELDS
+from config import WANDB_ENTITY, DEBERTA_MAX_LENGTH, DATASET_PATHS, DATASET_FIELDS
 from pipeline.utils import print_metrics, compute_retrieval_metrics, compute_answer_metrics, compute_all_answer_metrics
 from pipeline.modules import AsyncOpenAIConfig
 from pipeline.contriever import Retriever
 from pipeline.bm25.bm25_retriever import BM25Retriever
 from pipeline.verifier import Reranker
+from .modules import Reasoner, QAReader
 
 
 def run_batch(
@@ -273,6 +275,12 @@ def parse_args():
 
 def main(args: argparse.Namespace):
     set_seed(args.seed)
+
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    if local_rank in [-1, 0]:
+        wandb.init(project="CoRAG-test", entity=WANDB_ENTITY, config=args)
+    else:
+        os.environ["WANDB_MODE"] = "disabled"
 
     passages = args.passages or DATASET_PATHS[args.dataset]["passages"]
 

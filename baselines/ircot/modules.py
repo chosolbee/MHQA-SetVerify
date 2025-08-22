@@ -1,7 +1,6 @@
 import os
 import asyncio
 from nltk.tokenize import sent_tokenize
-from pipeline.modules import AsyncOpenAIProcessor
 
 
 class Reasoner:
@@ -38,6 +37,8 @@ class Reasoner:
         return [output.outputs[0].text.strip() for output in outputs]
 
     async def _process_prompts_openai_async(self, prompts):
+        from pipeline.modules import AsyncOpenAIProcessor
+
         async with AsyncOpenAIProcessor(self.llm) as processor:
             return await processor.process_prompts_async(
                 prompts,
@@ -96,6 +97,8 @@ class QAReader:
         return [output.outputs[0].text.strip() for output in outputs]
 
     async def _process_prompts_openai_async(self, prompts):
+        from pipeline.modules import AsyncOpenAIProcessor
+
         async with AsyncOpenAIProcessor(self.llm) as processor:
             return await processor.process_prompts_async(
                 prompts,
