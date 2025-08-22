@@ -1,7 +1,7 @@
 import argparse
 import pandas as pd
 
-COLUMNS = ["em", "f1", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1"]
+COLUMNS = ["em", "f1", "acc", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1", "iter_cnt"]
 
 pd.set_option('display.max_columns', None)
 

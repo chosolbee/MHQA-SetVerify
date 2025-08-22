@@ -13,6 +13,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainingArguments,
     Trainer,
+    DataCollatorWithPadding,
     set_seed,
 )
 from peft import LoraConfig, TaskType, PeftModelForSequenceClassification, prepare_model_for_kbit_training
@@ -24,7 +25,7 @@ from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final
 
 
 class StopDecisionDataset(Dataset):
-    def __init__(self, filepath, tokenizer, max_length=8192, target_label="prob", use_docs_only=False):
+    def __init__(self, filepath, tokenizer, max_iterations=10, max_length=8192, target_label="prob", use_docs_only=False):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.target_label = target_label
@@ -37,8 +38,8 @@ class StopDecisionDataset(Dataset):
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
-            self.data = [trace for trace in self.data if trace["iter_cnt"] < 10
-                         and max([trace[f"{target_label}"]] + trace[f"cont_{target_label}"]) + [trace[f"last_{target_label}"]] > 0.0]
+            self.data = [trace for trace in self.data if trace["iter_cnt"] < max_iterations
+                         and max([trace[f"{target_label}"]] + trace[f"cont_{target_label}"] + [trace[f"last_{target_label}"]]) > 0.0]
             np.random.shuffle(self.data)
 
     def __len__(self):
@@ -46,7 +47,7 @@ class StopDecisionDataset(Dataset):
 
     def _trace_to_encoding(self, trace):
         if self.use_docs_only:
-            filtered_trace = "\n".join(f"Document: {doc}" for doc in trace["history"])
+            filtered_trace = "\n".join(f"Document: {doc['title']}: {doc['text']}" for doc in trace["history"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
         else:
             filtered_trace = trace["trace"]
@@ -57,7 +58,6 @@ class StopDecisionDataset(Dataset):
                 chat,
                 tokenize=True,
                 truncation=True,
-                padding="max_length",
                 max_length=self.max_length,
                 return_tensors="pt",
                 return_dict=True
@@ -68,7 +68,6 @@ class StopDecisionDataset(Dataset):
             encoding = self.tokenizer(
                 text,
                 truncation=True,
-                padding="max_length",
                 max_length=self.max_length,
                 return_tensors="pt"
             )
@@ -137,7 +136,8 @@ def parse_args():
     parser.add_argument("--model-id", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="Model ID for Stop Decider")
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
-    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
+    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1", "acc"], help="Target label for training")
+    parser.add_argument("--max-iterations", type=int, default=10, help="Maximum number of iterations")
     parser.add_argument("--use-docs-only", action="store_true", help="Use only documents from trace")
     parser.add_argument("--use-4bit", action="store_true", help="Use 4-bit quantization for training (QLoRA)")
     parser.add_argument("--use-lora", action="store_true", help="Use LoRA for training")
@@ -166,6 +166,7 @@ def parse_args():
     parser.add_argument("--target-type", type=str, default="abs_bce", choices=["abs_bce", "abs_mse", "soft_diff", "hard_diff"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
+    parser.add_argument("--run-id", type=str, default=None, help="WandB run ID (for resuming from checkpoint)")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
 
     args = parser.parse_args()
@@ -184,6 +185,8 @@ def main(args):
             project="stop-decider-train",
             entity=WANDB_ENTITY,
             name=args.run_name,
+            id=args.run_id,
+            resume="allow",
             config=args,
         )
     else:
@@ -265,11 +268,31 @@ def main(args):
         data_seed=args.seed,
     )
 
-    train_dataset = StopDecisionDataset(args.train_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
+    train_dataset = StopDecisionDataset(
+        filepath=args.train_data_path,
+        tokenizer=tokenizer,
+        max_iterations=args.max_iterations,
+        max_length=args.max_length,
+        target_label=args.target_label,
+        use_docs_only=args.use_docs_only
+    )
     print(f"Number of training samples: {len(train_dataset)}", flush=True)
 
-    eval_dataset = StopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
+    eval_dataset = StopDecisionDataset(
+        filepath=args.eval_data_path,
+        tokenizer=tokenizer,
+        max_iterations=args.max_iterations,
+        max_length=args.max_length,
+        target_label=args.target_label,
+        use_docs_only=args.use_docs_only
+    )
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
+
+    data_collator = DataCollatorWithPadding(
+        tokenizer=tokenizer,
+        padding="longest",
+        pad_to_multiple_of=8,
+    )
 
     trainer = Trainer(
         model=model,
@@ -279,9 +302,10 @@ def main(args):
         compute_loss_func=compute_loss_func(args.target_type),
         compute_metrics=compute_metrics,
         processing_class=tokenizer,
+        data_collator=data_collator,
     )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=True if args.run_id else False)
 
     trainer.evaluate(eval_dataset)
 

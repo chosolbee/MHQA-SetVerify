@@ -16,6 +16,7 @@ from transformers import (
     TrainingArguments,
     Trainer,
     TrainerCallback,
+    DataCollatorWithPadding,
     set_seed,
 )
 from safetensors.torch import load_file
@@ -28,7 +29,7 @@ from pipeline.answer_generator.prompts import gen_final_answer_prompt, gen_final
 
 
 class MultiheadStopDecisionDataset(Dataset):
-    def __init__(self, filepath, tokenizer, max_length=4096, target_label="prob", use_docs_only=False):
+    def __init__(self, filepath, tokenizer, max_iterations=10, max_length=4096, target_label="prob", use_docs_only=False):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.target_label = target_label
@@ -41,7 +42,7 @@ class MultiheadStopDecisionDataset(Dataset):
 
         with open(filepath, "r", encoding="utf-8") as f:
             self.full_data = [json.loads(line.strip()) for line in f]
-            self.data = [trace for trace in self.full_data if trace["iter_cnt"] < 10
+            self.data = [trace for trace in self.full_data if trace["iter_cnt"] < max_iterations
                          and max([trace[f"{target_label}"]] + trace[f"cont_{target_label}"] + [trace[f"last_{target_label}"]]) > 0.0]
             np.random.shuffle(self.data)
             self.full_data = {trace["id"]: trace for trace in self.full_data}
@@ -51,7 +52,7 @@ class MultiheadStopDecisionDataset(Dataset):
 
     def _trace_to_encoding(self, trace, add_labels=True):
         if self.use_docs_only:
-            filtered_trace = "\n".join(f"Document: {doc}" for doc in trace["history"])
+            filtered_trace = "\n".join(f"Document: {doc['title']}: {doc['text']}" for doc in trace["history"])
             chat = gen_final_answer_docs_only_prompt(trace["question"], filtered_trace)
         else:
             filtered_trace = trace["trace"]
@@ -62,7 +63,6 @@ class MultiheadStopDecisionDataset(Dataset):
                 chat,
                 tokenize=True,
                 truncation=True,
-                padding="max_length",
                 max_length=self.max_length,
                 return_tensors="pt",
                 return_dict=True
@@ -73,7 +73,6 @@ class MultiheadStopDecisionDataset(Dataset):
             encoding = self.tokenizer(
                 text,
                 truncation=True,
-                padding="max_length",
                 max_length=self.max_length,
                 return_tensors="pt"
             )
@@ -96,13 +95,17 @@ class MultiheadStopDecisionDataset(Dataset):
 
     def get_batch_from_ids(self, trace_ids, device="cpu"):
         batch = [self._trace_to_encoding(self.full_data[trace_id], add_labels=False) for trace_id in trace_ids]
-        input_ids = torch.stack([item["input_ids"] for item in batch]).to(device)
-        attention_mask = torch.stack([item["attention_mask"] for item in batch]).to(device)
 
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask
-        }
+        # Reference: https://github.com/huggingface/transformers/blob/a5923d4/src/transformers/data/data_collator.py#L53
+        warning_state = self.tokenizer.deprecation_warnings.get("Asking-to-pad-a-fast-tokenizer", False)
+        self.tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
+
+        try:
+            batch = self.tokenizer.pad(batch, padding="longest", pad_to_multiple_of=8, return_tensors="pt")
+        finally:
+            self.tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = warning_state
+
+        return {key: val.to(device) for key, val in batch.items()}
 
 
 class MultiheadConfig(PretrainedConfig):
@@ -292,8 +295,9 @@ class MultiheadTrainer(Trainer):
         if total_steps <= 0:
             total_steps = (len(self.get_train_dataloader()) // self.args.gradient_accumulation_steps) * self.args.num_train_epochs
 
-        self.lambda_scheduler = lambda_scheduler
-        self.lambda_scheduler.set_total_steps(total_steps)
+        if lambda_scheduler is not None:
+            self.lambda_scheduler = lambda_scheduler
+            self.lambda_scheduler.set_total_steps(total_steps)
 
     def _create_sliding_tensor(self, tensor, mask):
         m, n = tensor.shape
@@ -326,10 +330,11 @@ class MultiheadTrainer(Trainer):
         batch_size = self._train_batch_size
         for i in range(0, len(valid_cont_ids), batch_size):
             batch_cont_ids = valid_cont_ids[i:i + batch_size].tolist()
-            batch_bs_inputs = self.train_dataset.get_batch_from_ids(batch_cont_ids, device=model.device)
-            batch_bs_labels = model(**batch_bs_inputs)
-            valid_bs_labels_head1[i:i + batch_size] = batch_bs_labels["preds_head1"].squeeze(-1)
-            valid_bs_labels_head2[i:i + batch_size] = batch_bs_labels["preds_head2"].squeeze(-1)
+            if len(batch_cont_ids) > 0:
+                batch_bs_inputs = self.train_dataset.get_batch_from_ids(batch_cont_ids, device=model.device)
+                batch_bs_labels = model(**batch_bs_inputs)
+                valid_bs_labels_head1[i:i + batch_size] = batch_bs_labels["preds_head1"].squeeze(-1)
+                valid_bs_labels_head2[i:i + batch_size] = batch_bs_labels["preds_head2"].squeeze(-1)
 
         bs_labels_head1 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, n)
         bs_labels_head2 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, n)
@@ -356,19 +361,25 @@ class MultiheadTrainer(Trainer):
         return tdlambda_label
 
     def _compute_td0_labels(self, model, inputs):
+        cont_labels_dtype = inputs["cont_labels"].dtype
+
         cont_ids = inputs["cont_ids"]  # (batch_size, n)
         cont_mask = inputs["cont_mask"]  # (batch_size, n)
         next_id = cont_ids[:, 0]  # (batch_size, )
         next_mask = cont_mask[:, 0]  # (batch_size, )
         valid_next_id = next_id[next_mask]
 
-        batch_bs_inputs = self.train_dataset.get_batch_from_ids(valid_next_id, device=model.device)
-        batch_bs_labels = model(**batch_bs_inputs)
-        valid_bs_labels_head1 = batch_bs_labels["preds_head1"].squeeze(-1)
-        valid_bs_labels_head2 = batch_bs_labels["preds_head2"].squeeze(-1)
+        valid_bs_labels_head1 = torch.zeros_like(valid_next_id, dtype=cont_labels_dtype)
+        valid_bs_labels_head2 = torch.zeros_like(valid_next_id, dtype=cont_labels_dtype)
 
-        bs_label_head1 = torch.zeros_like(next_id, dtype=inputs["cont_labels"].dtype)  # (batch_size, )
-        bs_label_head2 = torch.zeros_like(next_id, dtype=inputs["cont_labels"].dtype)  # (batch_size, )
+        if len(valid_next_id) > 0:
+            batch_bs_inputs = self.train_dataset.get_batch_from_ids(valid_next_id.tolist(), device=model.device)
+            batch_bs_labels = model(**batch_bs_inputs)
+            valid_bs_labels_head1 = batch_bs_labels["preds_head1"].squeeze(-1)
+            valid_bs_labels_head2 = batch_bs_labels["preds_head2"].squeeze(-1)
+
+        bs_label_head1 = torch.zeros_like(next_id, dtype=cont_labels_dtype)  # (batch_size, )
+        bs_label_head2 = torch.zeros_like(next_id, dtype=cont_labels_dtype)  # (batch_size, )
         bs_label_head1[next_mask] = valid_bs_labels_head1
         bs_label_head2[next_mask] = valid_bs_labels_head2
 
@@ -453,8 +464,8 @@ class LambdaScheduler:
     def set_total_steps(self, total_steps):
         self.total_steps = total_steps
 
-    def step(self):
-        self.current_step += 1
+    def set_current_step(self, current_step):
+        self.current_step = current_step
 
     def get_lambda(self):
         if self.total_steps is None:
@@ -479,7 +490,7 @@ class LambdaDecayCallback(TrainerCallback):
         self.lambda_scheduler = lambda_scheduler
 
     def on_step_end(self, args, state, control, **kwargs):
-        self.lambda_scheduler.step()
+        self.lambda_scheduler.set_current_step(state.global_step)
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if wandb.run is not None:
@@ -525,7 +536,8 @@ def parse_args():
     parser.add_argument("--model-arch", type=str, default="encoder_only", choices=["encoder_only", "decoder_only", "encoder_decoder"], help="Model Architecture")
     parser.add_argument("--train-data-path", type=str, required=True, help="Training Dataset Path")
     parser.add_argument("--eval-data-path", type=str, required=True, help="Evaluation Dataset Path")
-    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1"], help="Target label for training")
+    parser.add_argument("--target-label", type=str, default="prob", choices=["prob", "em", "f1", "acc"], help="Target label for training")
+    parser.add_argument("--max-iterations", type=int, default=10, help="Maximum number of iterations")
     parser.add_argument("--lambda-init", type=float, default=1.0, help="Initial Value of lambda for TD Lambda")
     parser.add_argument("--lambda-final", type=float, default=0.1, help="Final Value of lambda for TD Lambda")
     parser.add_argument("--lambda-scheduler-type", type=str, default="cosine", choices=["linear", "exponential", "cosine", "none"], help="TD Lambda Scheduler Type")
@@ -559,6 +571,7 @@ def parse_args():
     parser.add_argument("--target-type", type=str, default="tdlambda", choices=["mc", "tdlambda", "td0"], help="Target Type for Training")
     parser.add_argument("--disable-wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run-name", type=str, default=None, help="Custom WandB run name")
+    parser.add_argument("--run-id", type=str, default=None, help="WandB run ID (for resuming from checkpoint)")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
 
     args = parser.parse_args()
@@ -577,6 +590,8 @@ def main(args):
             project="stop-decider-train",
             entity=WANDB_ENTITY,
             name=args.run_name,
+            id=args.run_id,
+            resume="allow",
             config=args,
         )
     else:
@@ -648,19 +663,41 @@ def main(args):
         data_seed=args.seed,
     )
 
-    train_dataset = MultiheadStopDecisionDataset(args.train_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
+    train_dataset = MultiheadStopDecisionDataset(
+        filepath=args.train_data_path,
+        tokenizer=tokenizer,
+        max_iterations=args.max_iterations,
+        max_length=args.max_length,
+        target_label=args.target_label,
+        use_docs_only=args.use_docs_only
+    )
     print(f"Number of training samples: {len(train_dataset)}", flush=True)
 
-    eval_dataset = MultiheadStopDecisionDataset(args.eval_data_path, tokenizer, args.max_length, args.target_label, args.use_docs_only)
+    eval_dataset = MultiheadStopDecisionDataset(
+        filepath=args.eval_data_path,
+        tokenizer=tokenizer,
+        max_iterations=args.max_iterations,
+        max_length=args.max_length,
+        target_label=args.target_label,
+        use_docs_only=args.use_docs_only
+    )
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
-    lambda_scheduler = LambdaScheduler(
-        lambda_init=args.lambda_init,
-        lambda_final= args.lambda_final,
-        scheduler_type=args.lambda_scheduler_type,
+    data_collator = DataCollatorWithPadding(
+        tokenizer=tokenizer,
+        padding="longest",
+        pad_to_multiple_of=8,
     )
 
-    lambda_decay_callback = LambdaDecayCallback(lambda_scheduler)
+    lambda_scheduler = None
+    callbacks = []
+    if args.target_type == "tdlambda":
+        lambda_scheduler = LambdaScheduler(
+            lambda_init=args.lambda_init,
+            lambda_final= args.lambda_final,
+            scheduler_type=args.lambda_scheduler_type,
+        )
+        callbacks = [LambdaDecayCallback(lambda_scheduler)]
 
     trainer = MultiheadTrainer(
         target_type=args.target_type,
@@ -672,10 +709,11 @@ def main(args):
         compute_loss_func=compute_loss_func,
         compute_metrics=compute_metrics,
         processing_class=tokenizer,
-        callbacks=[lambda_decay_callback],
+        data_collator=data_collator,
+        callbacks=callbacks,
     )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=True if args.run_id else False)
 
     trainer.evaluate(eval_dataset)
 

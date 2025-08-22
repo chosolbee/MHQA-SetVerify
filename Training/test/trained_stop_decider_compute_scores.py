@@ -81,7 +81,7 @@ if __name__ == "__main__":
 
         if args.use_docs_only:
             batch_prompts = [
-                gen_final_answer_docs_only_prompt(trace["question"], "\n".join(f"Document: {doc}" for doc in trace["history"]))
+                gen_final_answer_docs_only_prompt(trace["question"], "\n".join(f"Document: {doc['title']}: {doc['text']}" for doc in trace["history"]))
                 for trace in batch_traces
             ]
         else:
