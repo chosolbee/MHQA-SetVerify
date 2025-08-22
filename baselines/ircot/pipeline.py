@@ -30,6 +30,7 @@ def run_batch(
     search_batch_size: int,
     max_docs: int,
     allow_duplicate_docs: bool,
+    sd_disable: bool,
     traces_path: str,
     stop_log_path: str,
     log_trace: bool,
@@ -107,7 +108,7 @@ def run_batch(
         ):
             trace += " " + rationale
 
-            if "answer is" in rationale.lower() or iter_count >= max_iterations:
+            if not sd_disable and "answer is" in rationale.lower() or iter_count >= max_iterations:
                 final_questions.append(question)
                 final_batch_history.append(history)
                 final_batch_history_indices.append(history_indices)
@@ -244,6 +245,9 @@ def parse_args():
     qa_reader_group.add_argument("--qareader-top-p", type=float, default=1.0, help="Top-p sampling for QA reader")
     qa_reader_group.add_argument("--qareader-provider", type=str, default="vllm", choices=["vllm", "openai"], help="Provider for QA reader")
     qa_reader_group.add_argument("--qareader-disable", action="store_true", help="Disable QA reader")
+
+    stop_decider_group = parser.add_argument_group("Stop Decider Options")
+    stop_decider_group.add_argument("--sd-disable", action="store_true", help="Disable stopping")
 
     reranker_group = parser.add_argument_group("Reranker Options")
     reranker_group.add_argument("--reranker-model-id", type=str, default="BAAI/bge-reranker-v2-m3", help="Model ID for reranker")
@@ -392,6 +396,7 @@ def main(args: argparse.Namespace):
             search_batch_size=args.search_batch_size,
             max_docs=args.max_docs,
             allow_duplicate_docs=args.allow_duplicate_docs,
+            sd_disable=args.sd_disable,
             traces_path=args.traces_path,
             stop_log_path=args.stop_log_path,
             log_trace=args.log_trace,
