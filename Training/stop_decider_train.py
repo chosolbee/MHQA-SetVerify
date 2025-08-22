@@ -39,7 +39,7 @@ class StopDecisionDataset(Dataset):
         with open(filepath, "r", encoding="utf-8") as f:
             self.data = [json.loads(line.strip()) for line in f]
             self.data = [trace for trace in self.data if trace["iter_cnt"] < max_iterations
-                         and max([trace[f"{target_label}"]] + trace[f"cont_{target_label}"]) + [trace[f"last_{target_label}"]] > 0.0]
+                         and max([trace[f"{target_label}"]] + trace[f"cont_{target_label}"] + [trace[f"last_{target_label}"]]) > 0.0]
             np.random.shuffle(self.data)
 
     def __len__(self):

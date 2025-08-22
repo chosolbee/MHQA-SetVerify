@@ -295,8 +295,9 @@ class MultiheadTrainer(Trainer):
         if total_steps <= 0:
             total_steps = (len(self.get_train_dataloader()) // self.args.gradient_accumulation_steps) * self.args.num_train_epochs
 
-        self.lambda_scheduler = lambda_scheduler
-        self.lambda_scheduler.set_total_steps(total_steps)
+        if lambda_scheduler is not None:
+            self.lambda_scheduler = lambda_scheduler
+            self.lambda_scheduler.set_total_steps(total_steps)
 
     def _create_sliding_tensor(self, tensor, mask):
         m, n = tensor.shape
@@ -329,10 +330,11 @@ class MultiheadTrainer(Trainer):
         batch_size = self._train_batch_size
         for i in range(0, len(valid_cont_ids), batch_size):
             batch_cont_ids = valid_cont_ids[i:i + batch_size].tolist()
-            batch_bs_inputs = self.train_dataset.get_batch_from_ids(batch_cont_ids, device=model.device)
-            batch_bs_labels = model(**batch_bs_inputs)
-            valid_bs_labels_head1[i:i + batch_size] = batch_bs_labels["preds_head1"].squeeze(-1)
-            valid_bs_labels_head2[i:i + batch_size] = batch_bs_labels["preds_head2"].squeeze(-1)
+            if len(batch_cont_ids) > 0:
+                batch_bs_inputs = self.train_dataset.get_batch_from_ids(batch_cont_ids, device=model.device)
+                batch_bs_labels = model(**batch_bs_inputs)
+                valid_bs_labels_head1[i:i + batch_size] = batch_bs_labels["preds_head1"].squeeze(-1)
+                valid_bs_labels_head2[i:i + batch_size] = batch_bs_labels["preds_head2"].squeeze(-1)
 
         bs_labels_head1 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, n)
         bs_labels_head2 = torch.zeros_like(cont_ids, dtype=cont_labels.dtype)  # (batch_size, n)
@@ -359,19 +361,25 @@ class MultiheadTrainer(Trainer):
         return tdlambda_label
 
     def _compute_td0_labels(self, model, inputs):
+        cont_labels_dtype = inputs["cont_labels"].dtype
+
         cont_ids = inputs["cont_ids"]  # (batch_size, n)
         cont_mask = inputs["cont_mask"]  # (batch_size, n)
         next_id = cont_ids[:, 0]  # (batch_size, )
         next_mask = cont_mask[:, 0]  # (batch_size, )
         valid_next_id = next_id[next_mask]
 
-        batch_bs_inputs = self.train_dataset.get_batch_from_ids(valid_next_id, device=model.device)
-        batch_bs_labels = model(**batch_bs_inputs)
-        valid_bs_labels_head1 = batch_bs_labels["preds_head1"].squeeze(-1)
-        valid_bs_labels_head2 = batch_bs_labels["preds_head2"].squeeze(-1)
+        valid_bs_labels_head1 = torch.zeros_like(valid_next_id, dtype=cont_labels_dtype)
+        valid_bs_labels_head2 = torch.zeros_like(valid_next_id, dtype=cont_labels_dtype)
 
-        bs_label_head1 = torch.zeros_like(next_id, dtype=inputs["cont_labels"].dtype)  # (batch_size, )
-        bs_label_head2 = torch.zeros_like(next_id, dtype=inputs["cont_labels"].dtype)  # (batch_size, )
+        if len(valid_next_id) > 0:
+            batch_bs_inputs = self.train_dataset.get_batch_from_ids(valid_next_id.tolist(), device=model.device)
+            batch_bs_labels = model(**batch_bs_inputs)
+            valid_bs_labels_head1 = batch_bs_labels["preds_head1"].squeeze(-1)
+            valid_bs_labels_head2 = batch_bs_labels["preds_head2"].squeeze(-1)
+
+        bs_label_head1 = torch.zeros_like(next_id, dtype=cont_labels_dtype)  # (batch_size, )
+        bs_label_head2 = torch.zeros_like(next_id, dtype=cont_labels_dtype)  # (batch_size, )
         bs_label_head1[next_mask] = valid_bs_labels_head1
         bs_label_head2[next_mask] = valid_bs_labels_head2
 
@@ -675,19 +683,21 @@ def main(args):
     )
     print(f"Number of evaluation samples: {len(eval_dataset)}", flush=True)
 
-    lambda_scheduler = LambdaScheduler(
-        lambda_init=args.lambda_init,
-        lambda_final= args.lambda_final,
-        scheduler_type=args.lambda_scheduler_type,
-    )
-
     data_collator = DataCollatorWithPadding(
         tokenizer=tokenizer,
         padding="longest",
         pad_to_multiple_of=8,
     )
 
-    lambda_decay_callback = LambdaDecayCallback(lambda_scheduler)
+    lambda_scheduler = None
+    callbacks = []
+    if args.target_type == "tdlambda":
+        lambda_scheduler = LambdaScheduler(
+            lambda_init=args.lambda_init,
+            lambda_final= args.lambda_final,
+            scheduler_type=args.lambda_scheduler_type,
+        )
+        callbacks = [LambdaDecayCallback(lambda_scheduler)]
 
     trainer = MultiheadTrainer(
         target_type=args.target_type,
@@ -700,7 +710,7 @@ def main(args):
         compute_metrics=compute_metrics,
         processing_class=tokenizer,
         data_collator=data_collator,
-        callbacks=[lambda_decay_callback],
+        callbacks=callbacks,
     )
 
     trainer.train(resume_from_checkpoint=True if args.run_id else False)
