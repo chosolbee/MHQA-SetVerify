@@ -267,6 +267,7 @@ def parse_args():
     main_group.add_argument("--traces-path", type=str, help="Path to save traces")
     main_group.add_argument("--stop-log-path", type=str, default=None, help="Optional JSONL path; Path to the JSONL file where stopping logs are written")
     main_group.add_argument("--log-trace", action="store_true", help="Enable detailed trace logging")
+    main_group.add_argument("--disable-wandb", action="store_true", help="Disable Weights & Biases logging")
     main_group.add_argument("--seed", type=int, default=42, help="Random Seed")
 
     args = parser.parse_args()
@@ -277,8 +278,8 @@ def main(args: argparse.Namespace):
     set_seed(args.seed)
 
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if local_rank in [-1, 0]:
-        wandb.init(project="CoRAG-test", entity=WANDB_ENTITY, config=args)
+    if local_rank in [-1, 0] and not args.disable_wandb:
+        wandb.init(project="IRCoT-test", entity=WANDB_ENTITY, config=args)
     else:
         os.environ["WANDB_MODE"] = "disabled"
 
@@ -441,6 +442,7 @@ def main(args: argparse.Namespace):
     print_metrics(all_metrics["answer"]["acc"], "Acc")
 
     print("\nAll done!")
+    wandb.finish()
 
 
 if __name__ == "__main__":
