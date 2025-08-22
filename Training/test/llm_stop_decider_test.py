@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from pipeline.modules import AsyncOpenAIConfig
 from pipeline.stop_decider import StopDecider
 
-COLUMNS = ["em", "f1", "acc", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1"]
+COLUMNS = ["em", "f1", "acc", "retrieval_em", "retrieval_precision", "retrieval_recall", "retrieval_f1", "iter_cnt"]
 
 pd.set_option('display.max_columns', None)
 
